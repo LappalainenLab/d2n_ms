@@ -1,15 +1,25 @@
 ##### D2N - Targeted-seq gene selection #####
-# (1) Get all genes from the NEF2 and GFI1B trans network, with cluster identity
-# (2) Find which genes have 5'ALT isoforms
-# (3) Get average absolute correlation with the rest of the genes in the cluster
-# (4) Get average expression in wt K562 scRNA-seq
-# (5) Add each gene's cumulative sum PPI score with the rest of the genes
+# (0) Load STING-seq_v1 data and generate data.table with the union of NFE2 and GFI1B trans network
+# (1) Include following features: 
+#   - Co-expression cluster identity
+#   - Alternative 5' transcript isoform, absolute correlation with other genes within trans network
+#   - Average WT K562 expression
+#   - If TF (and number of targets within network)
+#   - If target of TF
+# (2) Select all shared trans genes between NFE2 and GFI1B networks that:
+#   - Without 5' Alternative splicing
+#   - Have unique Ensembl IDs
+#   - Exclude dosage and control genes (already included in final gene selection)
+# (3) For each unique set of genes from each trans network, pick randomly a proportional number of genes the size of the co-expression clusters, so that:
+#   - 1/3 are TFs (Defined by Garcia-Alonso et al. Gen Res. 2019), have >0.1 mean(UMI)/cell in WT K562 and have >10 targets within trans network
+#   - 1/3 are targets of previously selected TFs (Defined by Garcia-Alonso et al. Gen Res. 2019), have >0.1 mean(UMI)/cell in WT K562 and have absolute mean co-expression correlation with other genes in trans network >0.2
+#   - No targets of any TFs, but have absolute mean co-expression correlation with other genes in trans network >0.2
 
 # JDE, September 2021
 # Last modified: January 2023
 
 
-# Libraries
+## Libs
 library(biomaRt)
 library(data.table)
 library(stringr)
@@ -18,34 +28,33 @@ library(parallel)
 library(plyr)
 library(ggplot2)
 
+## Dir
+setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/manuscripts/d2n/d2n_ms/01-library_design/")
+folder_name <- basename(getwd())
+data_dir = file.path("../../data", folder_name)
 
-
-# Dir
-
-setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/001-library_design/")
-processed_data = "processed_data"
-data_dir = "../../../data"
-
-
-# Functions
+## Functions
 remove_trailing_digit <- function(x) stringr::str_remove(x, "\\..+")
 
-# Variables
+## Vars
 num_tg_total = 86
 control_genes = c("GAPDH", "LHX3")
 titration_genes = c("GFI1B", "NFE2", "MYB", "TET2")
 
-### (0) Load data
+
+
+
+### (0) Load STING-seq_v1 data and generate data.table with the union of NFE2 and GFI1B trans network
 
 # Trans associations with each gene cluster id
-GFI1B_trans <- cbind(fread(input = file.path(data_dir, "GWAS-CRISPRi_phaseI/210709_UpdatedAssociations/210813_SSv1-Expression-Trans-SNP-63-Results.txt"))[sig_trans == 1,],
-                     data.table::setnames(fread(input = "../../001-GWAS_CRISPRi/202108_coexpression_SSv1/processed_data/SSv1_ClustIDs_SNP63.txt")[, .(nclust_4)], c("cluster")))
-NFE2_trans <- cbind(fread(input = file.path(data_dir, "GWAS-CRISPRi_phaseI/210709_UpdatedAssociations/210813_SSv1-Expression-Trans-SNP-83-Results.txt"))[sig_trans == 1,],
-                    data.table::setnames(fread(input = "../../001-GWAS_CRISPRi/202108_coexpression_SSv1/processed_data/SSv1_ClustIDs_SNP83.txt")[, .(nclust_4)], c("cluster")))
+GFI1B_trans <- cbind(fread(input = file.path(data_dir, "SSv1-Expression-Trans-GFI1B.txt"))[sig_trans == 1,],
+                     data.table::setnames(fread(input = file.path(data_dir, "SSv1_ClustIDs_GFI1B.txt"))[, .(nclust_4)], c("cluster")))
+NFE2_trans <- cbind(fread(input = file.path(data_dir, "SSv1-Expression-Trans-NFE2.txt"))[sig_trans == 1,],
+                    data.table::setnames(fread(input = file.path(data_dir, "SSv1_ClustIDs_NFE2.txt"))[, .(nclust_4)], c("cluster")))
 
 # Trans networks expression matrix
-GFI1B_Exp <- t(as.matrix(fread(file = paste0("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/001-GWAS_CRISPRi/202108_coexpression_SSv1/processed_data/output_magic_snp63.csv"))))
-NFE2_Exp <- t(as.matrix(fread(file = paste0("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/001-GWAS_CRISPRi/202108_coexpression_SSv1/processed_data/output_magic_snp83.csv"))))
+GFI1B_Exp <- t(as.matrix(fread(file = file.path(data_dir, "SSv1_Imputed_Expression_Matrix_GFI1B.csv"))))
+NFE2_Exp <- t(as.matrix(fread(file = file.path(data_dir, "SSv1_Imputed_Expression_Matrix_NFE2.csv"))))
 
 # Correlation matrices
 GFI1B_Cor <- WGCNA::bicor(x = t(GFI1B_Exp), nThreads = detectCores()/2)
@@ -70,9 +79,7 @@ universe_target_gene_symbols <- unique(c(GFI1B_features$gene, NFE2_features$gene
 universe_target_gene_symbols <- gsub("H3F3B", "H3-3B", universe_target_gene_symbols) 
 
 # 5'Alternative structure genes list
-alt5utr_all <- fread(input = file.path(data_dir, "ONT_Glinos_2021/K562_expressed_transcripts_alt5utrs.txt"))
 alt5utr_k562 <- fread(input = file.path(data_dir, "ONT_Glinos_2021/K562_expressed_transcripts_alt5utrs_within.txt"))
-alt5utr_all[, ensembl_gene_id := remove_trailing_digit(gene_id)]
 alt5utr_k562[, ensembl_gene_id := remove_trailing_digit(gene_id)]
 
 
