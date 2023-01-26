@@ -32,6 +32,7 @@ library(ggplot2)
 setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/manuscripts/d2n/d2n_ms/01-library_design/")
 folder_name <- basename(getwd())
 data_dir = file.path("../../data", folder_name)
+processed_data_dir = file.path("../../processed_data", folder_name)
 
 ## Functions
 remove_trailing_digit <- function(x) stringr::str_remove(x, "\\..+")
@@ -79,12 +80,12 @@ universe_target_gene_symbols <- unique(c(GFI1B_features$gene, NFE2_features$gene
 universe_target_gene_symbols <- gsub("H3F3B", "H3-3B", universe_target_gene_symbols) 
 
 # 5'Alternative structure genes list
-alt5utr_k562 <- fread(input = file.path(data_dir, "ONT_Glinos_2021/K562_expressed_transcripts_alt5utrs_within.txt"))
+alt5utr_k562 <- fread(input = file.path(data_dir, "GlinosNature2021_K562_alt5utrs.txt"))
 alt5utr_k562[, ensembl_gene_id := remove_trailing_digit(gene_id)]
 
 
 # K562 scRNA-seq data
-ECCITE_K562 <- fread(input = file.path(data_dir, "K562_RNAseq/K562_scRNAseq_bulkRNAseq.txt"))
+ECCITE_K562 <- fread(input = file.path(data_dir, "K562_scRNAseq_bulkRNAseq.txt"))
 
 
 # Get ENSEMBL ids
@@ -92,11 +93,9 @@ ECCITE_K562 <- fread(input = file.path(data_dir, "K562_RNAseq/K562_scRNAseq_bulk
 ensembl <- biomaRt::useEnsembl(
   biomart = "ensembl", 
   dataset = "hsapiens_gene_ensembl",
-  host = "http://www.ensembl.org"
+  host = "https://www.ensembl.org"
 )
-# Use 'attributes' to tell biomaRt what values to return; in this case, return a data frame with the Ensembl gene IDs and the gene symbols
-# Use 'filters' to tell biomaRt what to search by; in this case, search by Gene Symbol ('external_gene_name')
-# Use 'values' to input the search query; in this case, a vector of Ensembl gene IDs from a data frame I have in R
+# Convert ensembl IDs to external gene names
 symbols <- as.data.table(biomaRt::getBM(
   attributes = c("ensembl_gene_id", "external_gene_name"),
   filters = "external_gene_name",
@@ -105,58 +104,49 @@ symbols <- as.data.table(biomaRt::getBM(
 )) # some gene symbols have more than one Ensembl id
 
 # Merge Ensmbl ids with 5'Alt structure
-symbols[, alt5utr_all := ensembl_gene_id %in% alt5utr_all$ensembl_gene_id]
+symbols[, alt5utr_k562 := ensembl_gene_id %in% alt5utr_k562$ensembl_gene_id]
 
 
 # Find genes with multiple Ensembl IDs 
 gene_ensembl_count <- data.table::setnames(data.table(table(symbols[, external_gene_name])), c("gene", "ensembl_count"))
 genes_multiple_ensembl <- gene_ensembl_count[ensembl_count > 1, gene]
 
-symbols_unique <- symbols[, list(any_alt5utr = any(alt5utr_all), 
+symbols_unique <- symbols[, list(any_alt5utr = any(alt5utr_k562), 
                                  ensembl_id_list = paste0(ensembl_gene_id, collapse = ";"),
                                  multiple_ensembl = length(ensembl_gene_id)>1), by=list(gene = external_gene_name)]
 
 universe_target_gene_symbols_noAlt5 <- symbols_unique[any_alt5utr == F & multiple_ensembl == F, gene]
 
-## Add extra info related to TFs and PPI
-
-# Load in-house ADTs
-ADT <- fread(file = file.path(data_dir, "Antibodies_TotalSeq/TSC_BAP_v2.txt"))
+## Add extra info related to TFs
 
 # Load TF data
-TFS <- fread(file = file.path(data_dir, "TFs/GarciaAlonso_GenRes_2019/merged_interactions.txt"), header = T) %>%
+TFS <- fread(file = file.path(data_dir, "GarciaAlonsoGenRes2019_TF_targets.txt"), header = T) %>%
   dplyr::select(TF, target) %>%
   dplyr::group_by(TF) %>%
   dplyr::distinct(target, .keep_all = TRUE) %>%
   dplyr::mutate(
     N_TfTargets = length(target),
     N_TfTargets_in_transnet = sum(target %in% universe_target_gene_symbols_noAlt5),
-    TfTargets_in_transnet = paste(target[target %in% universe_target_gene_symbols_noAlt5], collapse = "__"),
-    N_ADTsTargets = sum(target %in% ADT$Gene)
+    TfTargets_in_transnet = paste(target[target %in% universe_target_gene_symbols_noAlt5], collapse = "__")
   ) %>%
   dplyr::ungroup() %>%
-  dplyr::select(TF, N_TfTargets, N_TfTargets_in_transnet, TfTargets_in_transnet, N_ADTsTargets) %>%
+  dplyr::select(TF, N_TfTargets, N_TfTargets_in_transnet, TfTargets_in_transnet) %>%
   dplyr::distinct(TF, .keep_all = TRUE) %>%
   dplyr::rename(TfGene = TF) %>%
   as.data.table()
 
-# Load PPI data
-PPI_exp <- fread(file = file.path(data_dir, "STRING/processed_data/STRING_PPI_physical_all.txt"))
-FindPPIinTransnet <- function(x) {
-  sum(PPI_exp[gene1 == x, gene2] %in% universe_target_gene_symbols_noAlt5)
-}
-symbols_unique[, PPI_in_transnet := FindPPIinTransnet(gene), gene]
 
 # Merge TFs data with rest of symbol information
 symbols_unique_features <- merge.data.table(symbols_unique, TFS, all.x = T, by.x = "gene", by.y = "TfGene")
 
 
+# Divide network genes into shared or unique
 Shared_features_symbols <- merge.data.table(Shared_features, symbols_unique_features, by="gene", all.x = T)
 Uniq_GFI1B_features_symbols <- merge.data.table(Uniq_GFI1B_features, symbols_unique_features, by="gene", all.x = T)
 Uniq_NFE2_features_symbols <- merge.data.table(Uniq_NFE2_features, symbols_unique_features, by="gene", all.x = T)
 
 
-# Select all shared transnetwork genes that are shared but don't have Alt 5'
+# Select all shared trans network genes that are shared but don't have Alt 5'
 Selected_shared_genes <- Shared_features_symbols[any_alt5utr == F & multiple_ensembl == F & !(gene %in% titration_genes), ]
 
 
@@ -189,7 +179,7 @@ p <- ggplot(plot_dt, aes(x=N_TfTargets_in_transnet, y=umis_per_cell_norm*10000))
   geom_hline(lty=2, yintercept = 0.1) +
   labs(y = "Normalized UMIs per cell", x = "# TF targets in trans-network")
 p
-ggsave("../001-library_design/plots/20211111_TransTFs_UMIsCell_NTargets.pdf", p, width = 6, height = 4)
+ggsave("../../plots/01-library_design/01_TransTFs_UMIsCell_NTargets.pdf", p, width = 6, height = 4)
 
 
 # A third of the target genes to be TFs
@@ -237,7 +227,7 @@ Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10
 Net_L[["GFI1B"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF == 0, .N, cluster]
 Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF == 0, .N, cluster]
 
-# Change to have enough genes to chose from
+# Change to have enough genes to choose from
 N_clust[network == "NFE2" & cluster == 1, n_TFtargets := 2]
 N_clust[network == "NFE2" & cluster == 1, n_others := 0 ]
 
@@ -253,8 +243,7 @@ Selected_targets <- lapply(c("GFI1B", "NFE2"), function(net){
 })
 names(Selected_targets) <- c("GFI1B", "NFE2") 
 
-hist(Net_L[["GFI1B"]][gene %in% Selected_targets[["GFI1B"]], Target_of_selected_TF], breaks = 7)
-hist(Net_L[["NFE2"]][gene %in% Selected_targets[["NFE2"]], Target_of_selected_TF], breaks = 7)
+
 
 
 # Select the rest of the target genes
@@ -281,10 +270,10 @@ Shared_unique_selected_genes <- Selected_shared_genes$gene
 Selected_genes_total <- unique(c(GFI1B_unique_selected_genes, NFE2_unique_selected_genes, Shared_unique_selected_genes, control_genes, titration_genes))
 
 
-X <- as.data.table(biomaRt::getBM(
+Final_sel_dt <- as.data.table(biomaRt::getBM(
   attributes = c("ensembl_gene_id", "external_gene_name"),
   filters = "external_gene_name",
   values = Selected_genes_total,
   mart = ensembl
 ))
-#fwrite(X, file = "processed_data/20211111_list_genes_targeted_seq_test.txt", quote = F, row.names = F)
+#fwrite(Final_sel_dt, file = file.path(data_dir, "D2N_selected_genes_list.txt"), quote = F, row.names = F)
