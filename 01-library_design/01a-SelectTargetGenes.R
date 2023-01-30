@@ -33,6 +33,7 @@ setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/manuscripts/d2n/d2n_ms/01-l
 folder_name <- basename(getwd())
 data_dir = file.path("../../data", folder_name)
 processed_data_dir = file.path("../../processed_data", folder_name)
+plots_dir = file.path("../../plots", folder_name)
 
 ## Functions
 remove_trailing_digit <- function(x) stringr::str_remove(x, "\\..+")
@@ -179,7 +180,7 @@ p <- ggplot(plot_dt, aes(x=N_TfTargets_in_transnet, y=umis_per_cell_norm*10000))
   geom_hline(lty=2, yintercept = 0.1) +
   labs(y = "Normalized UMIs per cell", x = "# TF targets in trans-network")
 p
-ggsave("../../plots/01-library_design/01_TransTFs_UMIsCell_NTargets.pdf", p, width = 6, height = 4)
+ggsave(file.path(plots_dir, "01a_01_TransTFs_UMIsCell_NTargets.pdf"), p, width = 6, height = 4)
 
 
 # A third of the target genes to be TFs
