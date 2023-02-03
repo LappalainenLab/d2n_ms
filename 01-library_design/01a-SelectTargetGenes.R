@@ -14,6 +14,7 @@
 #   - 1/3 are TFs (Defined by Garcia-Alonso et al. Gen Res. 2019), have >0.1 mean(UMI)/cell in WT K562 and have >10 targets within trans network
 #   - 1/3 are targets of previously selected TFs (Defined by Garcia-Alonso et al. Gen Res. 2019), have >0.1 mean(UMI)/cell in WT K562 and have absolute mean co-expression correlation with other genes in trans network >0.2
 #   - No targets of any TFs, but have absolute mean co-expression correlation with other genes in trans network >0.2
+# (4) Plot network graph of selected genes
 
 # JDE, September 2021
 # Last modified: January 2023
@@ -27,6 +28,12 @@ library(WGCNA)
 library(parallel)
 library(plyr)
 library(ggplot2)
+library(RColorBrewer)
+library(GGally)
+library(network)
+library(sna)
+library(foreach)
+library(scales)
 
 ## Dir
 setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/manuscripts/d2n/d2n_ms/01-library_design/")
@@ -277,4 +284,64 @@ Final_sel_dt <- as.data.table(biomaRt::getBM(
   values = Selected_genes_total,
   mart = ensembl
 ))
-#fwrite(Final_sel_dt, file = file.path(data_dir, "D2N_selected_genes_list.txt"), quote = F, row.names = F)
+fwrite(Final_sel_dt, file = file.path(processed_data_dir, "D2N_selected_genes_list.txt"), quote = F, row.names = F)
+
+
+
+
+
+### (4) Plot network graph of selected genes
+
+# Find min quantile bicor value that doesn't leave any isolated node
+
+network_genes = c("GFI1B", "NFE2")
+
+cor_mat_L <- list(GFI1B_Cor,NFE2_Cor)
+names(cor_mat_L) <- network_genes
+
+foreach(ng = 1:length(network_genes)) %do% {
+  
+  cor_mat <- cor_mat_L[[ng]]
+  
+  subset_genes <- Final_sel_dt$external_gene_name[Final_sel_dt$external_gene_name %in% colnames(cor_mat)]
+  
+  m <- cor_mat[subset_genes, subset_genes]
+  diag(m) <- 0
+  
+  thrs_dt <- foreach(qnt_thrs = seq(0.6, 0.85, 0.01), .combine = rbind) %do% {
+    thrs_abs_cor <- quantile(abs(m), qnt_thrs)
+    m_net <- abs(m)
+    m_net[m_net < thrs_abs_cor] <- 0
+    data.table(qnt_thrs = qnt_thrs,
+               isolated_nodes = sum(rowSums(m_net) == 0))
+  }
+  qnt_thrs_sel <- max(thrs_dt[, qnt_thrs - isolated_nodes])
+  
+  net_matrix <- abs(m)
+  thrs_abs_cor <- quantile(net_matrix, qnt_thrs_sel)
+  net_matrix[net_matrix < thrs_abs_cor] <- 0
+  
+  # Generate data table with pairs of genes bicor after abs(cor) filter
+  xy <- t(combn(colnames(net_matrix), 2))
+  cor_dt <- data.table(data.frame(xy, abs_cor=net_matrix[xy]))
+  cor_dt[abs_cor == 0, scaled_cor := 0]
+  cor_dt[abs_cor > 0, scaled_cor := rescale(abs_cor, to = c(0.1, 1))]
+  
+  # !!! Problem generating the complete matrix - Fix that
+  todecast_dt <- rbind(cor_dt, setnames(cor_dt, old = c("X1", "X2"), new = c("X2", "X1") )[])
+  
+  scaled_matrix <- dcast.data.table(todecast_dt[, .(X1, X2, scaled_cor)], value.var = "scaled_cor", formula = 'X1 ~ X2')
+}
+
+
+net <- network(net_matrix, 
+               directed = F,
+               ignore.eval = FALSE,
+               names.eval = "weights")
+network.vertex.names(net) = colnames(net_matrix)
+
+ggnet2(net, size = 3, edge.size = "weights")
+
+
+
+
