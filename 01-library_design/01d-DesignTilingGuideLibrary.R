@@ -99,8 +99,8 @@ GetAllGuidesInRegion <- function(regionToSearch, PAMpattern) {
                       "GUIDE_END" = (PAMends_Keep - 3),
                       "GUIDE_STRAND" = "+",
                       "GUIDE_SEQ" = sapply(PAMends_Keep, function(x){return(matchPattern_Output %>% subject %>% as.character %>% substr(start=(x-22),stop=(x)))}),
-                      "PAM" = as.data.frame(matchPattern_Output[indsToKeep,])$seq)) 
-  }
+                      "PAM" = (matchPattern_Output[indsToKeep,] %>% as.data.frame %>% as.matrix)) %>% mutate_if(is.factor, as.character) %>% mutate(PAM=x) %>% select(-x))
+    }
   
   GetGuidesFromMatch_BottomStrand <- function(matchPattern_Output){
     PAMends = end(matchPattern_Output)
@@ -110,12 +110,11 @@ GetAllGuidesInRegion <- function(regionToSearch, PAMpattern) {
                       "GUIDE_END" = (PAMends_Keep + 1),
                       "GUIDE_STRAND" = "-",
                       "GUIDE_SEQ" = sapply(PAMends_Keep, function(x){return(matchPattern_Output %>% subject %>% as.character %>% substr(start=(x-2),stop=(x+20)) %>% DNAString %>% reverseComplement %>% as.character)}),
-                      "PAM" = as.data.frame(reverseComplement(matchPattern_Output[indsToKeep,]))$seq))
-  }
+                      "PAM" = (matchPattern_Output[indsToKeep,] %>% reverseComplement %>% as.data.frame %>% as.matrix)) %>% mutate_if(is.factor, as.character) %>% mutate(PAM=x) %>% select(-x))
+    }
   
-  
-  temp <- bind_rows(GetGuidesFromMatch_TopStrand(matchPattern(PAMpattern, regionToSearch, fixed=F)),
-                    GetGuidesFromMatch_BottomStrand(matchPattern(reverseComplement(PAMpattern), regionToSearch, fixed=F))) %>%
+  temp <- bind_rows(GetGuidesFromMatch_TopStrand(vmatchPattern(PAMpattern, regionToSearch, fixed=F)),
+                    GetGuidesFromMatch_BottomStrand(vmatchPattern(reverseComplement(PAMpattern), regionToSearch, fixed=F))) %>%
     mutate(Design_PAM = as.character(PAMpattern))
   
   return(temp)
@@ -199,115 +198,6 @@ GR_fused_dt <- GRs_dt[, list("start" = min(start), "end" =  max(end)), .(gene, c
 # Get all guides within each region per gene
 GDT.1 <- GR_fused_dt[, GetAllGuidesInRegion(regionToSearch = getSeq(Hsapiens, names=chr, start=start, end=end), PAMpattern = DNAString("NGG")), gene]
 
+test <- getSeq(Hsapiens, names=GR_fused_dt$chr, start = GR_fused_dt$start, end = GR_fused_dt$end)[1]
 
-
-
-### (2) Filter guides based on different criteria
-spacerVec = GDT.1$GUIDE_SEQ
-
-# A) Remove repeats
-indsToRemove <- NULL; indsToRemove = c(indsToRemove, grep("AAAAA",spacerVec)); indsToRemove = c(indsToRemove, grep("CCCCC",spacerVec)); indsToRemove = c(indsToRemove, grep("GGGGG",spacerVec))
-indsRepeats = unique(indsToRemove); numWithRepeats = length(indsRepeats)
-
-# B) Remove U6 terminators
-indsU6 = grep("TTTT",spacerVec); numWithU6Term = length(indsU6)
-
-# C) Num duplicate spacers
-indsDups = which(duplicated(spacerVec)); numDups = length(indsDups)
-
-# D) EcoRI restriction sites (full and star activity) 
-EcorRI_main = "GAATTC"
-EcorRI_star1 = "TAATTC"
-EcorRI_star2 = "CAATTC"
-
-cnst_5 = toupper("caccG")
-cnst_3 = toupper("gttta")
-spacerVec_re <- paste0(cnst_5, substr(spacerVec, 1, 20), cnst_3)
-
-indsREsites <- NULL; indsREsites = c(indsREsites, grep(EcorRI_main, spacerVec_re)); indsREsites = c(indsREsites, grep(EcorRI_star1, spacerVec_re)); indsREsites = c(indsREsites, grep(EcorRI_star2, spacerVec_re))
-
-# All to remove
-uniqueIndsToRemove = sort(unique(c(indsRepeats, indsU6, indsDups, indsREsites)))
-numToRemove = length(uniqueIndsToRemove)
-numUnfiltered = length(spacerVec)
-
-GDT.2 <- GDT.1[-uniqueIndsToRemove,]
-
-
-
-
-
-### (3) Discard guides that fall in unique genetic variation of K562 (SNVs and SNPs)
-
-# Get actual genomic coordinates of the guides
-GDT.3 <- merge.data.table(GDT.2, setnames(GR_fused_dt[, .(gene, chr, start)], new=c("gene", "chr", "regions_start")), by="gene")
-GDT.3[, c("coord_start", "coord_end") := list(regions_start+GUIDE_START-1, regions_start+GUIDE_END-1)] # add actual genomic coordinates
-GDT.3[,  coord_pam_end := ifelse(GUIDE_STRAND == "+", coord_end+3, coord_end-3)]
-
-# Generate a GRanges object to liftOver the hg38 coordinates to hg19 (vcf of K562 genome assembly is hg19)
-gr_GDT.3 <- makeGRangesFromDataFrame(
-  as.data.frame(rbind(GDT.3[GUIDE_STRAND == "+", .(chr, coord_start, coord_pam_end, GUIDE_SEQ)], 
-                      setnames(GDT.3[GUIDE_STRAND == "-", .(chr, coord_pam_end, coord_start, GUIDE_SEQ)], c("chr", "coord_start", "coord_pam_end", "GUIDE_SEQ")))),
-  keep.extra.columns = T,
-  ignore.strand=T,
-  start.field = "coord_start",
-  end.field = "coord_pam_end")
-
-# The chain file for hg38 to hg19 transformation
-path = system.file(package="liftOver", "extdata", "hg38ToHg19.over.chain")
-ch = import.chain(path)
-
-
-# liftOver coordinates to Hg19
-seqlevelsStyle(gr_GDT.3) = "UCSC"  # necessary
-gr_GDT.3_hg19 = liftOver(gr_GDT.3, ch)
-gr_GDT.3_hg19 = unlist(gr_GDT.3_hg19)
-genome(gr_GDT.3_hg19) = "hg19"
-
-# Generate bed file with guides coordinates
-fwrite(as.data.table(gr_GDT.3_hg19)[, .(seqnames, start, end, GUIDE_SEQ)],
-       file = file.path(processed_data_dir, "bedtools/D2N_GDT3_hg19.bed"),
-       quote = F, row.names = F, col.names = F, sep="\t")
-
-# Get guides to retain 
-GDT.3_hg19_K562 <- fread(file.path(processed_data_dir, "bedtools/D2N_GDT3_hg19_intK562.bed"), 
-                         col.names = c("chr", "start", "end", "GUIDE_SEQ"))
-
-# Keep guides that K562 does not differe from the human ref
-GDT.4 <- GDT.3[GUIDE_SEQ %in% GDT.3_hg19_K562$GUIDE_SEQ, ]
-
-
-
-
-## (4) Generate table to run FlashFry
-# These are the flanking random sequences added
-# TTCGTACAAA
-# TGTCCGCACT
-GDT.5 <- GDT.4
-GDT.5[, FlasFryID := paste0(gene, "-", chr, "-", coord_start, "-", coord_end)]
-GDT.5[, FlashFrySEQ := paste0("TTCGTACAAA", GUIDE_SEQ, "TGTCCGCACT")]
-
-fwrite(GDT.5, file = "processed_data/guides/D2N_titration_ToScore.txt", quote = F, row.names = F, sep="\t")
-GDT.5_flashfry_scored <- fread(file = "processed_data/guides/D2N_titration_Scored.txt")
-
-## Remove from the data table the weismanTSS guides
-weismanTSS_scored_dt <- fread(input = "processed_data/guides/D2N_weismanTSS_Scored.txt")
-distalCRE_scored_dt <- fread(input = "processed_data/guides/D2N_distalCRE_Scored_Selected.txt")
-
-GDT.5_flashfry_scored[, is_weismanTSS := guide %in% weismanTSS_scored_dt$guide]
-GDT.5_flashfry_scored[, is_distalCRE := guide %in% distalCRE_scored_dt$GUIDE_SEQ]
-
-sum(GDT.5_flashfry_scored[, is_distalCRE])
-sum(GDT.5_flashfry_scored[, is_weismanTSS])
-
-
-
-
-
-
-
-
-
-
-
-
+GetAllGuidesInRegion(test, "NGG")
