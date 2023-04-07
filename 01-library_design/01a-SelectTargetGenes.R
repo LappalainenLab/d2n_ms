@@ -48,7 +48,7 @@ remove_trailing_digit <- function(x) stringr::str_remove(x, "\\..+")
 ## Vars
 num_tg_total = 86
 control_genes = c("GAPDH", "LHX3")
-titration_genes = c("GFI1B", "NFE2", "MYB", "TET2")
+dosage_genes = c("GFI1B", "NFE2", "MYB", "TET2")
 
 
 
@@ -155,7 +155,7 @@ Uniq_NFE2_features_symbols <- merge.data.table(Uniq_NFE2_features, symbols_uniqu
 
 
 # Select all shared trans network genes that are shared but don't have Alt 5'
-Selected_shared_genes <- Shared_features_symbols[any_alt5utr == F & multiple_ensembl == F & !(gene %in% titration_genes), ]
+Selected_shared_genes <- Shared_features_symbols[any_alt5utr == F & multiple_ensembl == F & !(gene %in% dosage_genes), ]
 
 
 # Find number of targets per cluster
@@ -174,8 +174,8 @@ N_clust[network == "NFE2", adj_n_target := n_target + 1]
 sum(N_clust$n_target)
 
 # Find number of TFs to select per cluster
-Net_L <- list(GFI1B = Uniq_GFI1B_features_symbols[ multiple_ensembl == F & any_alt5utr == F & !(gene %in% titration_genes),],
-              NFE2 = Uniq_NFE2_features_symbols[multiple_ensembl == F & any_alt5utr == F & !(gene %in% titration_genes), ])
+Net_L <- list(GFI1B = Uniq_GFI1B_features_symbols[ multiple_ensembl == F & any_alt5utr == F & !(gene %in% dosage_genes),],
+              NFE2 = Uniq_NFE2_features_symbols[multiple_ensembl == F & any_alt5utr == F & !(gene %in% dosage_genes), ])
 
 plot_dt <- rbind(cbind(Net_L[["GFI1B"]][ !is.na(N_TfTargets_in_transnet),], data.frame(network = "GFI1B")), 
                  cbind(Net_L[["NFE2"]][ !is.na(N_TfTargets_in_transnet),], data.frame(network = "NFE2")))
@@ -194,8 +194,8 @@ ggsave(file.path(plots_dir, "01a_01_TransTFs_UMIsCell_NTargets.pdf"), p, width =
 N_clust[, n_TFs := ceiling(n_target/3)]
 
 # Make sure there are enough TFs in represented in each cluster
-Uniq_GFI1B_features_symbols[multiple_ensembl == F & any_alt5utr == F & N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes), .N, cluster]
-Uniq_NFE2_features_symbols[multiple_ensembl == F & any_alt5utr == F & N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes), .N, cluster]
+Uniq_GFI1B_features_symbols[multiple_ensembl == F & any_alt5utr == F & N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes), .N, cluster]
+Uniq_NFE2_features_symbols[multiple_ensembl == F & any_alt5utr == F & N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes), .N, cluster]
 
 # Modify numbers depending on absence of TFs to be selected
 N_clust[network == "NFE2" & cluster %in% 3:2, n_TFs := 0]
@@ -209,7 +209,7 @@ N_clust[, n_others := floor( (adj_n_target - n_TFs)/2 )]
 set.seed(1234)
 Selected_TFs <- lapply(c("GFI1B", "NFE2"), function(net){
   do.call("c", lapply(1:4, function(c){
-    tfs = Net_L[[net]][N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & cluster == c , gene]
+    tfs = Net_L[[net]][N_TfTargets_in_transnet >10 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & cluster == c , gene]
     sample(tfs, size = N_clust[ network == net & cluster == c, n_TFs])
   }))
 })
@@ -229,11 +229,11 @@ Net_L[["NFE2"]][, Target_of_selected_TF := sum(c(Targets_selected_TFs[["GFI1B"]]
 
 # Make sure in each cluster there are enough genes from both categories (target or not of a TF)
 # TF targets
-Net_L[["GFI1B"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF > 0, .N, cluster]
-Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF > 0, .N, cluster]
+Net_L[["GFI1B"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & Target_of_selected_TF > 0, .N, cluster]
+Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & Target_of_selected_TF > 0, .N, cluster]
 # Others
-Net_L[["GFI1B"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF == 0, .N, cluster]
-Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & Target_of_selected_TF == 0, .N, cluster]
+Net_L[["GFI1B"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & Target_of_selected_TF == 0, .N, cluster]
+Net_L[["NFE2"]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & Target_of_selected_TF == 0, .N, cluster]
 
 # Change to have enough genes to choose from
 N_clust[network == "NFE2" & cluster == 1, n_TFtargets := 2]
@@ -244,7 +244,7 @@ N_clust[network == "NFE2" & cluster == 1, n_others := 0 ]
 set.seed(3412)
 Selected_targets <- lapply(c("GFI1B", "NFE2"), function(net){
   do.call("c", lapply(1:4, function(c){
-    targets = Net_L[[net]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% titration_genes) & cluster == c & Target_of_selected_TF > 0, gene]
+    targets = Net_L[[net]][ is.na(N_TfTargets) & mean_abs_cor > 0.2 & umis_per_cell_norm*10000 >0.1 & !(gene %in% dosage_genes) & cluster == c & Target_of_selected_TF > 0, gene]
     targets = targets[!(grepl("^(MT-)|(LINC)|(MRP)", targets))]
     sample(targets, size = N_clust[ network == net & cluster == c, n_TFtargets])
   }))
@@ -275,7 +275,7 @@ Selected_shared_genes[, Target_of_selected_TF := sum(c(Targets_selected_TFs[["GF
 Shared_unique_selected_genes <- Selected_shared_genes$gene
 
 
-Selected_genes_total <- unique(c(GFI1B_unique_selected_genes, NFE2_unique_selected_genes, Shared_unique_selected_genes, control_genes, titration_genes))
+Selected_genes_total <- unique(c(GFI1B_unique_selected_genes, NFE2_unique_selected_genes, Shared_unique_selected_genes, control_genes, dosage_genes))
 
 
 Final_sel_dt <- as.data.table(biomaRt::getBM(
@@ -299,16 +299,19 @@ network_genes = c("GFI1B", "NFE2")
 cor_mat_L <- list(GFI1B_Cor,NFE2_Cor)
 names(cor_mat_L) <- network_genes
 
-foreach(ng = 1:length(network_genes)) %do% {
+rescaled_mat_L <- foreach(ng = 1:length(network_genes)) %do% {
   
   cor_mat <- cor_mat_L[[ng]]
   
+  # Genes only found in each network
   subset_genes <- Final_sel_dt$external_gene_name[Final_sel_dt$external_gene_name %in% colnames(cor_mat)]
   
-  m <- cor_mat[subset_genes, subset_genes]
+  # Subset to those selected genes
+  m <- cor_mat[subset_genes[order(subset_genes)], subset_genes[order(subset_genes)]]
   diag(m) <- 0
   
-  thrs_dt <- foreach(qnt_thrs = seq(0.6, 0.85, 0.01), .combine = rbind) %do% {
+  # Find  maximum co-expression correlation quantile value so that all nodes are connected in a graph 
+  thrs_dt <- foreach(qnt_thrs = seq(0.4, 0.8, 0.01), .combine = rbind) %do% {
     thrs_abs_cor <- quantile(abs(m), qnt_thrs)
     m_net <- abs(m)
     m_net[m_net < thrs_abs_cor] <- 0
@@ -317,6 +320,7 @@ foreach(ng = 1:length(network_genes)) %do% {
   }
   qnt_thrs_sel <- max(thrs_dt[, qnt_thrs - isolated_nodes])
   
+  # All edges with lower corr to the one in threshold, set to zero to not draw an edge
   net_matrix <- abs(m)
   thrs_abs_cor <- quantile(net_matrix, qnt_thrs_sel)
   net_matrix[net_matrix < thrs_abs_cor] <- 0
@@ -327,20 +331,38 @@ foreach(ng = 1:length(network_genes)) %do% {
   cor_dt[abs_cor == 0, scaled_cor := 0]
   cor_dt[abs_cor > 0, scaled_cor := rescale(abs_cor, to = c(0.1, 1))]
   
-  # !!! Problem generating the complete matrix - Fix that
-  todecast_dt <- rbind(cor_dt, setnames(cor_dt, old = c("X1", "X2"), new = c("X2", "X1") )[])
+  # iterate over the matrix and substitute rescaled edge values
+  rescaled_matrix <- net_matrix
+  for (n in 1:nrow(cor_dt)) {
+    g1 = cor_dt[n, X1]
+    g2 = cor_dt[n, X2]
+    v = cor_dt[n, scaled_cor]
+    rescaled_matrix[g1, g2] <- v
+    rescaled_matrix[g2, g1] <- v
+  }
   
-  scaled_matrix <- dcast.data.table(todecast_dt[, .(X1, X2, scaled_cor)], value.var = "scaled_cor", formula = 'X1 ~ X2')
 }
 
+sorted_gene_names <- sort(unique(Final_sel_dt$external_gene_name))
 
-net <- network(net_matrix, 
+empty_mat <- matrix(, nrow = length(sorted_gene_names), ncol = length(sorted_gene_names))
+
+
+
+
+net <- network(rescaled_matrix, 
                directed = F,
                ignore.eval = FALSE,
                names.eval = "weights")
-network.vertex.names(net) = colnames(net_matrix)
+network.vertex.names(net) = colnames(rescaled_matrix)
 
-ggnet2(net, size = 3, edge.size = "weights")
+
+net %v% "node_type" = ifelse(colnames(rescaled_matrix) %in% dosage_genes, "red", ifelse(colnames(rescaled_matrix) %in% control_genes, "blue", "grey80"))
+
+labs_nodes = rep("", nrow(rescaled_matrix))
+labs_nodes[colnames(rescaled_matrix) %in% dosage_genes] <- colnames(rescaled_matrix)[colnames(rescaled_matrix) %in% dosage_genes]
+
+ggnet2(net, size = 3, edge.size = "weights", color = "node_type", label = labs_nodes, label.size = 2)
 
 
 
