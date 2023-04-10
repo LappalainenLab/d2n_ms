@@ -1,8 +1,8 @@
 ##### D2N - CIS genes FCs - sgRNA properties #####
 # (1) FC differences per sgRNA type
-# (2) FC vs On-target and Off-target sgRNA activity
-# (3) Attenuated sgRNAs
-#     - Relationship between dosage gene FC and sgRNA mismatch position?
+# (2) FC vs. On-target and Off-target sgRNA activity
+# (3) FC vs. number of cells per perturbation
+# (4) Attenuated sgRNAs - Dosage gene FC and sgRNA mismatch position from PAM
 
 
 # JDE, July 2022
@@ -12,7 +12,7 @@
 
 ## Libs
 library(data.table)
-library(ggplot2); theme_set(theme_bw())
+library(ggplot2); theme_set(theme_bw());
 library(cowplot)
 
 
@@ -45,7 +45,10 @@ DG_dt[guide_class == "distal CRE", final_guide_class := "Enhancer"]
 DG_dt[guide_class == "attenuated", final_guide_class := "Attenuated"]
 DG_dt[, final_guide_class := factor(final_guide_class, levels = c("TSS", "Tiling", "Enhancer", "Attenuated", "NTC"))]
 
-## (1) FC distributions and differences per sgRNA type
+
+
+
+### (1) FC distributions and differences per sgRNA type
 
 plot_dt <- copy(DG_dt)
 plot_dt[guide_class == "NTC", cis_gene := "NTC"]
@@ -77,7 +80,66 @@ p <- plot_grid(pA, pB, align = "h", axis = "tb", nrow = 1, rel_widths = c(3/10, 
 ggsave(file.path(plots_dir, "05a_01_CisGenes_DistFC_FCbyGuideType.pdf"), p, width = 8, height = 3)
 
 
-# (3) Attenuated sgRNAs
+
+### (2) ON-/OFF-target activity of gRNAs
+plot_dt <- melt.data.table(DG_dt[!grepl("NTC", guide_1), .(dosage_gene_log2FC, Doench2014OnTarget, otCount, guide_class, guide_1, cell_line)],
+                           id.vars = c("dosage_gene_log2FC", "guide_class", "guide_1", "cell_line"), 
+                           variable.name = "on_off_param", 
+                           value.name = "value")
+plot_dt[, parameter := on_off_param]
+plot_dt[, parameter := ifelse(on_off_param == "Doench2014OnTarget", "ON-target activity", "OFF-target counts")]
+plot_dt_cor = plot_dt[!is.na(value), .(r = round(cor(abs(dosage_gene_log2FC), value), 2),
+                                       pval = round(cor.test(abs(dosage_gene_log2FC), value)$p.value, 3)),
+                      .(cell_line, parameter)]
+plot_dt_cor[, ycrisp := c(0.78, 0.92, 350, 420)]
+p <- ggplot(plot_dt[guide_class != "NTC", ], aes(x=abs(dosage_gene_log2FC), y=value)) +
+  geom_point(aes(fill=cell_line), size=2.5, color="white", shape=21, alpha=0.75, show.legend = F) +
+  facet_grid(parameter ~ ., scales="free_y") +
+  scale_fill_manual("cell line", values = col_crispr) +
+  labs(x= "Absolute cis gene log2(FC)", y="Property value") +
+  geom_smooth(method = "lm", formula = 'y ~ x', linetype=1, aes(color=cell_line), show.legend = F, alpha=0.1, linewidth=0.5) +
+  scale_color_manual("cell line", values = col_crispr) +
+  geom_text(data = plot_dt_cor, aes(x=0.75, y=ycrisp, color=cell_line, label = paste0(cell_line, " r = ", r, "\npval = ", pval)), show.legend = F, size =3) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
+p
+ggsave(file.path(plots_dir, "05a_02_OnOffActivityVsFC.pdf"), p, width = 3.3, height = 5)
+
+
+
+### (3) FC vs. number of cells per perturbation
+
+cor_dt <- DG_stats[dosage_gene != "NTC", .(r = round(cor(ncells_1, abs(dosage_gene_log2FC)), 2), 
+                                 pval = round(cor.test(ncells_1, abs(dosage_gene_log2FC))$p.value, 3),
+                                 ncells_1 = quantile(ncells_1, 0.9)), dosage_gene]
+pA <- ggplot(DG_stats[dosage_gene != "NTC"], aes(y = abs(dosage_gene_log2FC), x = ncells_1)) +
+  geom_point(aes(fill=cell_line),color="white", size=4, shape=21, alpha=0.8) +
+  scale_fill_manual("dosage gene", values = col_crispr, guide = "none") +
+  labs(x="Number of cells with unique CRISPR perturbation", y = "Absolute cis gene log2(FC)") +
+  facet_grid(. ~ dosage_gene, scales = "free_x") +
+  geom_smooth(method = "lm", formula = 'y ~ x', linetype=1, color = "grey40", show.legend = F, alpha=0.2, linewidth=0.5) +
+  geom_text(data=cor_dt, aes(label=paste0("r=", r, "\npval=", pval), y = 1.6)) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
+
+
+cor_dt <- DG_stats[dosage_gene != "NTC", .(r = round(cor(ncells_1, n_sigDE_fdr5), 2), 
+                                           pval = round(cor.test(ncells_1, abs(dosage_gene_log2FC))$p.value, 3),
+                                           ncells_1 = quantile(ncells_1, 0.5)), dosage_gene]
+pB <- ggplot(DG_stats[dosage_gene != "NTC"], aes(y = n_sigDE_fdr5, x = ncells_1)) +
+  geom_point(aes(fill=cell_line),color="white", size=4, shape=21, alpha=0.8) +
+  scale_fill_manual("dosage gene", values = col_crispr, guide = "none") +
+  labs(x="Number of cells with unique CRISPR perturbation", y = "Number of DE trans genes\n(FDR < 0.05)") +
+  facet_grid(. ~ dosage_gene, scales = "free_x") +
+  geom_smooth(method = "lm", formula = 'y ~ x', linetype=1, color = "grey40", show.legend = F, alpha=0.2, linewidth=0.5) +
+  geom_text(data=cor_dt, aes(label=paste0("r=", r, "\npval=", pval), y = -12)) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
+
+
+p <- plot_grid(pA, pB, align = "v", axis = "rl", nrow = 2, rel_widths = c(5/10, 5/10))
+
+ggsave(file.path(plots_dir, "05a_03_NcellsVsCisTransFC.pdf"), p, width = 10.5, height = 6.5)
+
+
+### (4) Attenuated sgRNAs
 
 DG_att <- merge.data.table(DG_stats, DG_dt, 
                            by.x = c("guide_1", "cell_line", "dosage_gene_log2FC", "dosage_gene"), 
@@ -96,6 +158,8 @@ p <- ggplot(DG_att, aes(x = MM_POS, y = dosage_gene_log2FC)) +
   scale_color_manual("Cis gene", values = col_genes) +
   labs(x = "sgRNA missmatch position", y = "Cis gene log2(FC)") +
   geom_text(data = cor_dt, aes(label = paste0("r = ", round(r, 2), "\np = ", pval))) +
-  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  theme(legend.position = "bottom", legend.direction = "vertical")
 p
+ggsave(file.path(plots_dir, "05a_04_AttenuatedDistFromPamVsFC.pdf"), p, width = 3.3, height = 6.5)
 
