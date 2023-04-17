@@ -28,7 +28,7 @@ dosage_genes = c("GFI1B", "MYB", "NFE2", "TET2")
 col_genes = RColorBrewer::brewer.pal(5, "Set1")
 names(col_genes) <- c("MYB", "TET2", "NFE2", "GFI1B", "NTC")
 col_crispr = list(CRISPRa = "#FF7F00", CRISPRi = "#377EB8")
-rect_trans_GFI1B <- c("FOXP1", "GATA2", "PITX1", "RHD", "MYB", "KLK1", "TUBB1", "SLC22A4", "LHX3")
+
 
 
 # FC data
