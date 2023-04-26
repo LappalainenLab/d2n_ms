@@ -59,18 +59,8 @@ MD <- as.data.table(d2n@meta.data)
 plot_dt <- copy(DG_dt)
 plot_dt[guide_class == "NTC", cis_gene := "NTC"]
 plot_dt[, cis_gene := factor(cis_gene, levels = c(dosage_genes, "NTC"))]
-pA <- ggplot(plot_dt, aes(y = dosage_gene_log2FC)) +
-  geom_hline(yintercept = 0, linetype=2) +
-  geom_histogram(bins = 50, fill= "grey95", color="grey25", linewidth = 0.25) +
-  scale_x_reverse() +
-  scale_y_continuous(position = "right") +
-  facet_grid(. ~ cis_gene, scales = "free_x") +
-  theme(axis.title.y.right = element_blank()) +
-  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white"))+
-  theme(panel.grid.minor = element_blank())
 
-
-pB <- ggplot(DG_dt, aes(x=cis_gene, dosage_gene_log2FC)) +
+pA <- ggplot(DG_dt, aes(x=cis_gene, dosage_gene_log2FC)) +
   geom_hline(yintercept = 0, linetype=2) +
   geom_point(aes(alpha=sig_fdr10, fill=cell_line), size=2.5, color="white", shape=21, position = position_jitter(w = 0.2, h = 0)) +
   facet_grid(. ~ final_guide_class) +
@@ -79,9 +69,19 @@ pB <- ggplot(DG_dt, aes(x=cis_gene, dosage_gene_log2FC)) +
   scale_alpha_manual("FDR < 0.1?", values = c(0.3, 0.8)) + 
   guides(alpha = guide_legend(override.aes = list(size=3, color="black"))) +
   theme(axis.title.x = element_blank()) + ylab("dosage gene log2FC") +
-  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white"), legend.position = "left") +
+  coord_cartesian(ylim = c(min(plot_dt$dosage_gene_log2FC)- 0.1, max(plot_dt$dosage_gene_log2FC)+ 0.1))
 
-p <- plot_grid(pA, pB, align = "h", axis = "tb", nrow = 1, rel_widths = c(3/10, 7/10))
+pB <- ggplot(plot_dt, aes(y = dosage_gene_log2FC)) +
+  geom_hline(yintercept = 0, linetype=2) +
+  geom_histogram(bins = 50, fill= "grey95", color="grey25", linewidth = 0.25) +
+  facet_grid(. ~ cis_gene, scales = "free_x") +
+  theme(axis.title.y.left = element_blank()) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white"))+
+  theme(panel.grid.minor = element_blank()) +
+  coord_cartesian(ylim = c(min(plot_dt$dosage_gene_log2FC)- 0.1, max(plot_dt$dosage_gene_log2FC)+ 0.1))
+
+p <- plot_grid(pA, pB, align = "h", axis = "tb", nrow = 1, rel_widths = c(7/10, 3/10))
 
 ggsave(file.path(plots_dir, "05a_01_CisGenes_DistFC_FCbyGuideType.pdf"), p, width = 8, height = 3)
 
