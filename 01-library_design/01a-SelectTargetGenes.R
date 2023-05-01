@@ -292,62 +292,60 @@ fwrite(Final_sel_dt, file = file.path(processed_data_dir, "D2N_selected_genes_li
 
 ### (4) Plot network graph of selected genes
 
-# Find min quantile bicor value that doesn't leave any isolated node
+# Load SS-v1 Seurat object 
+load("/gpfs/commons/groups/lappalainen_lab/jdomingo/data//GWAS-CRISPRi_phaseI/210709_UpdatedMatrices/210709_cDNA-Seurat.RData")
+cDNA_seurat <- NormalizeData(cDNA_seurat)
 
-network_genes = c("GFI1B", "NFE2")
+# Subset D2N genes from SS-v1 matrix to generate MAGIC input matrix
+d2n_genes <- Final_sel_dt$external_gene_name
+write.csv(t(as.matrix(cDNA_seurat[["RNA"]]@data[d2n_genes,])), file = file.path(processed_data_dir, "SSv1_MAGIC_imput.csv"), quote = F, row.names = F)
 
-cor_mat_L <- list(GFI1B_Cor,NFE2_Cor)
-names(cor_mat_L) <- network_genes
+# Run MAGIC from R
+command_line = paste0("/nfs/sw/python/python-3.8.3/bin/python3.8 ", "run_magic.py", 
+                      " -i ", file.path(processed_data_dir, "SSv1_MAGIC_imput.csv"), 
+                      " -o ", file.path(processed_data_dir, "SSv1_MAGIC_output.csv"))
+system(command_line)
 
-rescaled_mat_L <- foreach(ng = 1:length(network_genes)) %do% {
-  
-  cor_mat <- cor_mat_L[[ng]]
-  
-  # Genes only found in each network
-  subset_genes <- Final_sel_dt$external_gene_name[Final_sel_dt$external_gene_name %in% colnames(cor_mat)]
-  
-  # Subset to those selected genes
-  m <- cor_mat[subset_genes[order(subset_genes)], subset_genes[order(subset_genes)]]
-  diag(m) <- 0
-  
-  # Find  maximum co-expression correlation quantile value so that all nodes are connected in a graph 
-  thrs_dt <- foreach(qnt_thrs = seq(0.4, 0.8, 0.01), .combine = rbind) %do% {
-    thrs_abs_cor <- quantile(abs(m), qnt_thrs)
-    m_net <- abs(m)
-    m_net[m_net < thrs_abs_cor] <- 0
-    data.table(qnt_thrs = qnt_thrs,
-               isolated_nodes = sum(rowSums(m_net) == 0))
-  }
-  qnt_thrs_sel <- max(thrs_dt[, qnt_thrs - isolated_nodes])
-  
-  # All edges with lower corr to the one in threshold, set to zero to not draw an edge
-  net_matrix <- abs(m)
-  thrs_abs_cor <- quantile(net_matrix, qnt_thrs_sel)
-  net_matrix[net_matrix < thrs_abs_cor] <- 0
-  
-  # Generate data table with pairs of genes bicor after abs(cor) filter
-  xy <- t(combn(colnames(net_matrix), 2))
-  cor_dt <- data.table(data.frame(xy, abs_cor=net_matrix[xy]))
-  cor_dt[abs_cor == 0, scaled_cor := 0]
-  cor_dt[abs_cor > 0, scaled_cor := rescale(abs_cor, to = c(0.1, 1))]
-  
-  # iterate over the matrix and substitute rescaled edge values
-  rescaled_matrix <- net_matrix
-  for (n in 1:nrow(cor_dt)) {
-    g1 = cor_dt[n, X1]
-    g2 = cor_dt[n, X2]
-    v = cor_dt[n, scaled_cor]
-    rescaled_matrix[g1, g2] <- v
-    rescaled_matrix[g2, g1] <- v
-  }
-  
+# Get imputed expression values
+SSv1_d2n_expr <- t(as.matrix(fread(file = file.path(processed_data_dir, "SSv1_MAGIC_output.csv"))))
+
+# Correlation matrices
+SSv1_d2n_cor <- WGCNA::bicor(x = t(SSv1_d2n_expr), nThreads = detectCores()/2)
+
+# Remove same gene correlation
+m <- SSv1_d2n_cor
+diag(m) <- 0
+
+# Find  maximum co-expression correlation quantile value so that all nodes are connected in a graph 
+thrs_dt <- foreach(qnt_thrs = seq(0.1, 0.9, 0.01), .combine = rbind) %do% {
+  thrs_abs_cor <- quantile(abs(m), qnt_thrs)
+  m_net <- abs(m)
+  m_net[m_net < thrs_abs_cor] <- 0
+  data.table(qnt_thrs = qnt_thrs,
+             isolated_nodes = sum(rowSums(m_net) == 0))
 }
+qnt_thrs_sel <- max(thrs_dt[isolated_nodes == 2, min(qnt_thrs)])
 
-sorted_gene_names <- sort(unique(Final_sel_dt$external_gene_name))
+# All edges with lower corr to the one in threshold, set to zero to not draw an edge
+net_matrix <- abs(m)
+thrs_abs_cor <- quantile(net_matrix, qnt_thrs_sel)
+net_matrix[net_matrix < thrs_abs_cor] <- 0
 
-empty_mat <- matrix(, nrow = length(sorted_gene_names), ncol = length(sorted_gene_names))
+# Generate data table with pairs of genes bicor after abs(cor) filter
+xy <- t(combn(colnames(net_matrix), 2))
+cor_dt <- data.table(data.frame(xy, abs_cor=net_matrix[xy]))
+cor_dt[abs_cor == 0, scaled_cor := 0]
+cor_dt[abs_cor > 0, scaled_cor := rescale(abs_cor, to = c(0.1, 1))]
 
-
+# iterate over the matrix and substitute rescaled edge values
+rescaled_matrix <- net_matrix
+for (n in 1:nrow(cor_dt)) {
+  g1 = cor_dt[n, X1]
+  g2 = cor_dt[n, X2]
+  v = cor_dt[n, scaled_cor]
+  rescaled_matrix[g1, g2] <- v
+  rescaled_matrix[g2, g1] <- v
+}
 
 
 net <- network(rescaled_matrix, 
@@ -359,11 +357,20 @@ network.vertex.names(net) = colnames(rescaled_matrix)
 
 net %v% "node_type" = ifelse(colnames(rescaled_matrix) %in% dosage_genes, "red", ifelse(colnames(rescaled_matrix) %in% control_genes, "blue", "grey80"))
 
+
+cols_edges <- rep("grey80", length(colnames(rescaled_matrix)))
+matched_indices <- match(c("MYB", "TET2", "NFE2", "GFI1B", "LHX3", "GAPDH"), colnames(rescaled_matrix))
+cols_edges[matched_indices] <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00", "#FF7F00")
+
+net %v% "node_type" = cols_edges
+
+
 labs_nodes = rep("", nrow(rescaled_matrix))
 labs_nodes[colnames(rescaled_matrix) %in% dosage_genes] <- colnames(rescaled_matrix)[colnames(rescaled_matrix) %in% dosage_genes]
 
-ggnet2(net, size = 3, edge.size = "weights", color = "node_type", label = labs_nodes, label.size = 2)
-
-
+set.seed(123)
+p <- ggnet2(net, size = 3, edge.size = "weights", color = "node_type", label = labs_nodes, label.size = 0.8, edge.alpha = 0.2)
+p
+ggsave(file.path(plots_dir, "01a_02_SSv1D2NNetowrkCoexpression.pdf"), p, width = 8, height = 8)
 
 

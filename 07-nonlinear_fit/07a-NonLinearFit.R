@@ -41,7 +41,7 @@ dosage_genes = c("GFI1B", "MYB", "NFE2", "TET2")
 col_genes = RColorBrewer::brewer.pal(5, "Set1")
 names(col_genes) <- c("MYB", "TET2", "NFE2", "GFI1B", "NTC")
 col_crispr = list(CRISPRa = "#FF7F00", CRISPRi = "#377EB8")
-rect_trans_GFI1B <- c("FOXP1", "GATA2", "PITX1", "RHD", "MYB", "KLK1", "TUBB1", "SLC22A4", "LHX3")
+rect_trans_GFI1B <- c("KLK1", "SLC22A4", "RHD", "GATA2", "PITX1", "LHX3", "TUBB1", "FOXP1", "MYB")
 control_genes = c("LHX3", "GAPDH")
 
 ## Functions
@@ -304,6 +304,8 @@ mono_cistrans <- RMSE_dt$cis_trans[!(RMSE_dt$cis_trans %in% nonmono_cistrans)]
 S4Param_dt[, non_monotonic := ifelse(cis_trans %in% nonmono_cistrans, T, F)]
 
 
+
+
 RMSE_dt[, non_monotonic := ifelse(cis_trans %in% nonmono_cistrans, T, F)]
 
 pA <- ggplot(RMSE_dt[!(gene %in% control_genes) & dosage_gene != "TET2", ], aes(x = delta_RMSE_sig_loess, color = non_monotonic, fill=non_monotonic)) +
@@ -332,7 +334,7 @@ ggsave(file.path(plots_dir, "07a_05_SigVsLoess_RMSE.pdf"), p, width = 8, height 
 
 trans_genes_ord <- trans_genes[order(trans_genes)]
 
-Fit_curves_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% {
+Fit_curves_dt <- foreach(dg = dosage_genes, .combine = rbind) %do% {
   
   cistrans_ord <- paste0(dg, "_", sort(d2n_genes[d2n_genes != dg]))
   dose_bins = seq(from = DE_dt[dosage_gene == dg, min(dosage_gene_log2FC)], to = DE_dt[dosage_gene == dg, max(dosage_gene_log2FC)], length.out = 100)
@@ -365,17 +367,53 @@ Fit_curves_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% 
 
 
 # Examples in heatmap GFI1B
-p <- ggplot(DE_dt[gene %in% rect_trans_GFI1B & dosage_gene == "GFI1B", ], aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
-  facet_grid(gene ~ dosage_gene) +
+plot_dt <- DE_dt[gene %in% rect_trans_GFI1B & dosage_gene == "GFI1B", ]
+plot_dt[, gene_ord := factor(gene, levels = rect_trans_GFI1B)]
+
+fit_dt <- Fit_curves_dt[gene %in% rect_trans_GFI1B & dosage_gene == "GFI1B", ]
+fit_dt[, gene_ord := factor(gene, levels = rect_trans_GFI1B)]
+
+p <- ggplot(plot_dt, aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
+  facet_grid(gene_ord ~ dosage_gene, ) +
   geom_point(color = "grey20", alpha=0.7) +
-  geom_line(data = Fit_curves_dt[gene %in% rect_trans_GFI1B & dosage_gene == "GFI1B", ], color="#FF7F00", linewidth = 0.75) +
+  geom_line(data = fit_dt, color="#FF7F00", linewidth = 0.75) +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
   labs(x="GFI1B log2(FC)", y="Trans gene log2(FC)")
+
 ggsave(file.path(plots_dir, "07a_06_DosageRespCurves_ExamplesGFI1B.pdf"), p, width = 2.1, height = 12)
 
 
+# Plot for each cis gene, all genes dosage responses observations and fits
+foreach(dg = dosage_genes) %do% {
+  ord_genes <- d2n_genes[d2n_genes != dg][order(d2n_genes[d2n_genes != dg])]
+  plot_dt <- DE_dt[dosage_gene == dg & gene != dg, ]
+  plot_dt[, gene := factor(gene, levels = ord_genes)]
+  fit_dt <- Fit_curves_dt[dosage_gene == dg & gene != dg,  ]
+  fit_dt[, gene := factor(gene, levels = ord_genes)]
+  
+  p <- ggplot(plot_dt, aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
+    facet_wrap(gene ~ ., ncol = 7) +
+    geom_point(color = "grey20", alpha=0.7) +
+    geom_line(data = fit_dt, color="#FF7F00", linewidth = 0.75) +
+    theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+    labs(x=paste0(dg, " log2(FC)"), y="Trans gene log2(FC)") +
+    coord_cartesian(ylim = c(min(plot_dt$avg_log2FC)-0.1, max(plot_dt$avg_log2FC+0.1)))
+  
+  ggsave(file.path(plots_dir, paste0("07a_07_AllDosageRespCurves_", dg, ".pdf")), p, width = 5, height = 12)
+}
 
 
+
+
+#### Save processed data
+# RMSE/AIC data
+fwrite(file = file.path(processed_data_dir, "D2N_AIC_LmSig4Loess.txt"), RMSE_dt, quote = F, row.names = F)
+
+# Parameters per gene and cis gene perturbed
+fwrite(file = file.path(processed_data_dir, "D2N_S4Param_10fCV.txt"), S4Param_dt, quote = F, row.names = F)
+
+# Fitted dosage response curves (sigmoid or loess)
+fwrite(file = file.path(processed_data_dir, "D2N_S4LoessModelFits.txt"), Fit_curves_dt, quote = F, row.names = F)
 
 
 
