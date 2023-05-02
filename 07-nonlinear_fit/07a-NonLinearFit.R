@@ -41,7 +41,7 @@ dosage_genes = c("GFI1B", "MYB", "NFE2", "TET2")
 col_genes = RColorBrewer::brewer.pal(5, "Set1")
 names(col_genes) <- c("MYB", "TET2", "NFE2", "GFI1B", "NTC")
 col_crispr = list(CRISPRa = "#FF7F00", CRISPRi = "#377EB8")
-rect_trans_GFI1B <- c("KLK1", "SLC22A4", "RHD", "GATA2", "PITX1", "LHX3", "TUBB1", "FOXP1", "MYB")
+rect_trans_GFI1B <- c("TUBB1", "RHD", "KLK1", "SLC22A4", "PITX1", "LHX3", "GATA2", "FOXP1", "MYB")
 control_genes = c("LHX3", "GAPDH")
 
 ## Functions
@@ -70,8 +70,10 @@ SigmoidL4Predict <- function(x, b, c, d, e) {
 ## Data
 DE_dt_raw <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/009-DEanalyses/processed_data/after_seurat4.3/d2n_DemuxHTOdCas9_Wilcoxon_AllGenesDE.RDS") 
 DE_dt_raw[, guide_crispr := paste0(guide_1, "-", cell_line)][]
-DE_dt <- DE_dt_raw[!(guide_crispr == "NFE2_9-CRISPRa" | dosage_gene %in% c("NTC") | grepl("CRISPR", gene))]
-
+# Remove TET2 perturbations, the NFE2 outlier and the CRISPR genes
+DE_dt <- merge.data.table(DE_dt_raw[!(guide_crispr == "NFE2_9-CRISPRa" | dosage_gene %in% c("NTC") | grepl("CRISPR", gene))], 
+                          DE_dt_raw[gene == dosage_gene, .(avg_log2FC_dg = avg_log2FC), guide_crispr], 
+                          by = "guide_crispr")
 
 
 ### (1) Fit loess, linear and sigmoidal model 
@@ -286,15 +288,15 @@ S4Param_dt[, fdr_slope := p.adjust(S4Param_dt[, ztest(slope_IF, slope_IF_sd/sqrt
 S4Param_dt[, fdr_range := p.adjust(S4Param_dt[, ztest(min_max_range, min_max_range_sd/sqrt(n_cv), 0.05, "greater")])]
 S4Param_dt[, unresponsive :=  ifelse(fdr_slope > 0.01 | fdr_range > 0.01, T, F)]
 S4Param_dt[, .N, .(dosage_gene, unresponsive)]
-#   dosage_gene  unresponsive  N
-# 1:       GFI1B        FALSE 71
-# 2:       GFI1B         TRUE 20
-# 3:         MYB         TRUE 30
-# 4:         MYB        FALSE 61
-# 5:        NFE2         TRUE 42
-# 6:        NFE2        FALSE 49
-# 7:        TET2        FALSE 30
-# 8:        TET2         TRUE 61
+#    dosage_gene unresponsive  N
+# 1:       GFI1B         TRUE 18
+# 2:       GFI1B        FALSE 73
+# 3:         MYB        FALSE 57
+# 4:         MYB         TRUE 34
+# 5:        NFE2        FALSE 49
+# 6:        NFE2         TRUE 42
+# 7:        TET2        FALSE 21
+# 8:        TET2         TRUE 70
 
 
 # Non-monotonic (for GFI1B since has the largest range)
@@ -379,7 +381,7 @@ p <- ggplot(plot_dt, aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
   geom_line(data = fit_dt, color="#FF7F00", linewidth = 0.75) +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
   labs(x="GFI1B log2(FC)", y="Trans gene log2(FC)")
-
+p
 ggsave(file.path(plots_dir, "07a_06_DosageRespCurves_ExamplesGFI1B.pdf"), p, width = 2.1, height = 12)
 
 
