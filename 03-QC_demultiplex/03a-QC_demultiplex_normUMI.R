@@ -59,14 +59,14 @@ plot_dt <- foreach(cnt_guide = control_guides, .combine = rbind) %do% {
 ncells_dt <- plot_dt[, .N, .(guide, cell_line, perturbation)]
 
 p <- ggplot(plot_dt, aes(x = dosage_gene_expr, y = guide)) +
-  geom_density_ridges(scale = 2, size = 0.5, rel_min_height = 0.001, aes(fill = cell_line, alpha = is_cnt_guide), quantile_lines = TRUE, quantiles = 2, show.legend = F) +
+  geom_density_ridges(scale = 2, size = 0.25, rel_min_height = 0.001, aes(fill = cell_line, alpha = is_cnt_guide), quantile_lines = TRUE, quantiles = 2, show.legend = F) +
   facet_grid(cell_line ~ perturbation, scales = "free_y") +
-  geom_text(data = ncells_dt, aes(label = paste0("n = ", N), x=-2), size=3) +
+  geom_text(data = ncells_dt, aes(label = paste0("n = ", N), x=-2), size=2.5) +
   labs(x="Cis gene normalized expression", y="Cells with guides:") +
   scale_fill_manual("", values = col_crispr) +
   scale_alpha_manual("", values = c(0.5, 1)) +
   scale_x_continuous(limits = c(-3, ceiling(max(dt$dosage_gene_expr)))) +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
 p
-ggsave(file.path(plots_dir, "03a_XX_DistUMItss.pdf"), p, width = 14, height = 4)
+ggsave(file.path(plots_dir, "03a_XX_DistUMItss.pdf"), p, width = 15, height = 4)
 
