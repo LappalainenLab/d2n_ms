@@ -17,7 +17,7 @@ library(cowplot)
 library(foreach)
 library(doParallel); registerDoParallel(detectCores()/2)
 library(ggridges)
-library(Seurat)
+library(SeuratObject)
 
 
 ## Dir
@@ -42,6 +42,7 @@ col_crispr = list(CRISPRa = "#FF7F00", CRISPRi = "#377EB8")
 DE_dt <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/009-DEanalyses/processed_data/after_seurat4.3/d2n_DemuxHTOdCas9_Wilcoxon_AllGenesDE.RDS")
 DG_dt <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/009-DEanalyses/processed_data/after_seurat4.3/d2n_DemuxHTOdCas9_Wilcoxon_DGGuidePropertiesDE.RDS")
 DG_stats <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/009-DEanalyses/processed_data/after_seurat4.3/d2n_DemuxHTOdCas9_Wilcoxon_DGStatsDE.RDS")
+DG_stats[, guide_crispr := paste0(guide_1, "-", cell_line)]
 
 DG_dt[, final_guide_class := guide_class]
 DG_dt[guide_class == "titration", final_guide_class := "Tiling"]
@@ -126,9 +127,9 @@ pA <- ggplot(DG_stats[dosage_gene != "NTC"], aes(y = abs(dosage_gene_log2FC), x 
   geom_text(data=cor_dt, aes(label=paste0("r=", r, "\npval=", pval), y = 1.6)) +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
 
-
-cor_dt <- DG_stats[dosage_gene != "NTC", .(r = round(cor(ncells_1, n_sigDE_fdr5), 2), 
-                                           pval = round(cor.test(ncells_1, abs(dosage_gene_log2FC))$p.value, 3),
+# For trans effects remove guide 9 for NFE2 since trans response is complete outlier
+cor_dt <- DG_stats[!(dosage_gene == "NTC" | guide_crispr == "NFE2_9-CRISPRa"), .(r = round(cor(ncells_1, n_sigDE_fdr5), 2), 
+                                           pval = round(cor.test(ncells_1, n_sigDE_fdr5)$p.value, 3),
                                            ncells_1 = quantile(ncells_1, 0.5)), dosage_gene]
 pB <- ggplot(DG_stats[dosage_gene != "NTC"], aes(y = n_sigDE_fdr5, x = ncells_1)) +
   geom_point(aes(fill=cell_line),color="white", size=4, shape=21, alpha=0.8) +
@@ -138,7 +139,6 @@ pB <- ggplot(DG_stats[dosage_gene != "NTC"], aes(y = n_sigDE_fdr5, x = ncells_1)
   geom_smooth(method = "lm", formula = 'y ~ x', linetype=1, color = "grey40", show.legend = F, alpha=0.2, linewidth=0.5) +
   geom_text(data=cor_dt, aes(label=paste0("r=", r, "\npval=", pval), y = -12)) +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) 
-
 
 p <- plot_grid(pA, pB, align = "v", axis = "rl", nrow = 2, rel_heights = c(5/10, 5/10))
 
