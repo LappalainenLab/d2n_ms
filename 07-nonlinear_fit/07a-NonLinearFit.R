@@ -62,6 +62,11 @@ ztest <- function(av, se, mu, alternative = "two.sided") {
 }
 
 SigmoidL4Predict <- function(x, b, c, d, e) {
+  #x Input value
+  #Slope parameter
+  #Lower asymptote
+  #Upper asymptote
+  #Inflection point
   y = c + ((d-c)/(1+exp(-b*(x-e))))
   return(y)
 }
