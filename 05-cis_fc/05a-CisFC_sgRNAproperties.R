@@ -55,6 +55,29 @@ d2n <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosag
 MD <- as.data.table(d2n@meta.data)
 
 
+### (0) Stats and numbers for manuscript 
+
+## Min and Max FC across all target genes
+DG_dt[, .(min_log2fc = min(dosage_gene_log2FC), max_log2fc = max(dosage_gene_log2FC))]
+# min_log2fc max_log2fc
+# 1:   -1.82795  0.7986941
+
+## Min and Max FC for each target gene
+DG_dt[, .(min_log2fc = min(dosage_gene_log2FC), max_log2fc = max(dosage_gene_log2FC)), .(cis_gene)]
+# cis_gene min_log2fc max_log2fc
+# 1:    GFI1B -1.8279497  0.5068685
+# 2:      MYB -0.9441177  0.1774883
+# 3:     NFE2 -0.8146770  0.2810703
+# 4:     TET2 -0.4309872  0.7986941
+
+## Accuracy of target gene FC direction and cell line of origin
+acc_dt <- DG_dt[sig_fdr10 == T, .(cell_line, dosage_gene_log2FC)]
+acc_dt[, fc_dir_cell_line := ifelse(dosage_gene_log2FC < 0, "CRISPRi", "CRISPRa")]
+acc_dt[, sum(cell_line == fc_dir_cell_line) / .N * 100]
+# [1] 98.8764
+
+
+
 ### (1) FC distributions and differences per sgRNA type
 
 plot_dt <- copy(DG_dt)

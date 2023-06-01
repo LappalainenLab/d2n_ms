@@ -51,6 +51,22 @@ DG_dt[, final_guide_class := factor(final_guide_class, levels = c("TSS", "Tiling
 DG_dt[, guide_crispr := paste0(guide_1, "-", cell_line)]
 
 
+### (0) Stats and numbers for manuscript
+
+# max effect of CRISPRi and CRISPRa relative to TSS distance
+x_values = seq(from = -500, to = 500, by = 1)
+
+# Ca
+l_a <- loess(DG_dt[guide_category %in% c("titration", "weismanTSS") & cell_line == "CRISPRa", .(dosage_gene_log2FC, dist2tss)], formula = "dosage_gene_log2FC ~ dist2tss" )
+pred_a <- predict(l_a, newdata = data.frame(dist2tss = x_values))
+x_values[which.max(pred_a)]
+# [1] -99
+
+# Ci
+l_i <- loess(DG_dt[guide_category %in% c("titration", "weismanTSS") & cell_line == "CRISPRi", .(dosage_gene_log2FC, dist2tss)], formula = "dosage_gene_log2FC ~ dist2tss" )
+pred_i <- predict(l_i, newdata = data.frame(dist2tss = x_values))
+x_values[which.min(pred_a)]
+# [1] 468
 
 ### (1) CRISPRi vs. CRISPRa cis gene FCs
 
