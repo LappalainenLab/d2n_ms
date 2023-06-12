@@ -2,7 +2,7 @@ library(here)
 here::i_am("integrate_d2n_aml_ref.R")
 
 #specify monocle lib path
-.libPaths( c( "/proj/lappalainen_lab1/users/marii/chip_seq_ann" , .libPaths() ) )
+#.libPaths( c( "/proj/lappalainen_lab1/users/marii/chip_seq_ann" , .libPaths() ) )
 
 library(stringr)
 library(monocle3)
@@ -345,8 +345,8 @@ d2n_true_erythro_corr_df$gene = factor(d2n_true_erythro_corr_df$gene, levels = d
 d2n_true_erythro_corr_df$pval = p.adjust(d2n_true_erythro_corr_df$pval, method = "bonferroni")
 
 p = ggplot(d2n_true_erythro_corr_df, aes(x=as.factor(gene), y=corr)) +
-  geom_segment( aes(x=as.factor(gene), xend=as.factor(gene), y=0, yend=corr, alpha = -log10(pval) > 2), color="grey") +
-  geom_point( color="orange", aes(alpha=-log10(pval) > 2)) + #, size = abs(corr))) +
+  geom_segment( aes(x=as.factor(gene), xend=as.factor(gene), y=0, yend=corr), color="grey") +
+  geom_point( color="orange") +
   theme_light() + 
   theme( 
     panel.grid.major.x = element_blank(), 
