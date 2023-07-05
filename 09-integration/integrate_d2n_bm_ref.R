@@ -22,9 +22,10 @@ library(viridis)
 library(geosphere)
 library(lsa)
 library(foreach)
-library(doParallel)
+library(doParallel)	
 library(tidyr)
 library(gtable)
+library(gridExtra)
 
 registerDoParallel(cores=20)
 
@@ -106,24 +107,45 @@ cols = DiscretePalette(24)
 #------------------------------------------Panel A---------------------------------------------------
 p1 <- DimPlot(obj.merge, cols = alpha(cols, 0.33), group.by = 'celltype.l2',  pt.size = 0.01, raster = F) + 
 	NoLegend() + 
-	ggtitle("All")
+	ggtitle("All") +
+	xlab("") + 
+        ylab("UMAP_2")
 p2 <- DimPlot(obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype.l2', cells = Cells(d2n),  pt.size = 0.01, raster = F) + 
 	NoLegend() + 
-	ggtitle("Perturbed")
+	ggtitle("Perturbed") + 
+	xlab("UMAP_1") +
+	ylab("")
 p3 <- DimPlot(obj.merge,   cols = alpha(cols, 0.33), group.by = 'celltype.l2', cells = Cells(reference),  pt.size = 0.01, raster = F) + 
 	NoLegend() + 
-	ggtitle("Reference")
-p4 =  DimPlot(obj.merge, cols = alpha(cols, 0.33), group.by = 'celltype.l2') + 
-	theme(legend.position= "bottom",legend.text = element_text(size = 9)) + 
-	guides(color=guide_legend(nrow=3, byrow=TRUE))
+	ggtitle("Reference") +
+	xlab("") + 
+        ylab("")
+p4 =  DimPlot(obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype.l2', cells = Cells(reference), raster = F) + guides(colour = guide_legend(override.aes = list(size=2), nrow=3)) +
+														      theme(legend.position= "bottom",
+                                                                                                                                legend.text = element_text(size = 4),
+                                                                                                                                legend.key.size = unit(2, 'mm'),
+																legend.spacing.x = unit(1, 'mm'),
+																legend.spacing.y = unit(1, 'mm'))
 
+design = "
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ 111111112222222233333333
+ #44444444444444444444444
+"
 leg = gtable_filter(ggplot_gtable(ggplot_build(p4)), "guide-box")
-
-png(paste0(plots_dir, "/Panel_A_BM_dataset.png"), width = 9, height = 4.5,  res=720, units= "in")
-(p1|p2|p3)/leg + plot_layout(nrow = 2, height = c(4, 1))&theme(axis.text = element_text(size = 7), 
-								axis.title = element_text(size = 9),
-								plot.title = element_text(size = 12))
+svg(paste0(plots_dir, "/Panel_A_BM_dataset.svg"), width = 118.8, height = 59.4,  res=720, units= "mm")
+p1 + p2 + p3 + leg + plot_layout(design = design)&theme(axis.text = element_text(size = 4),
+                                                                axis.title = element_text(size = 5),
+                                                                plot.title = element_text(size = 7))
 dev.off()
+
 
 #------------------------------------------Diffusion map analysis-----------------------------------
 df.map <- DiffusionMap(data = obj.merge[['refDR']]@cell.embeddings[,1:30])
@@ -183,12 +205,17 @@ p2 = plot_cells(cds,
            color_cells_by = "pseudotime",
            label_cell_groups=FALSE,
 	   label_leaves=FALSE,
+	   label_roots = FALSE,
            label_branch_points=FALSE,
-           graph_label_size=1.5) + 
-	theme(legend.position = "bottom") +
+           graph_label_size=0.0) + 
+	theme(#legend.position = c(0.25, 0.15), legend.direction = "horizontal",
+		legend.text = element_text(size = 3),
+		legend.key.size = unit(2.3, 'mm'),
+		legend.background = element_blank(),
+		legend.title = element_text(size=5)) + 
 	ggtitle("Pseudotime") +
-        xlab("DC_1") +
-        ylab("DC_2")
+        xlab("") +
+        ylab("")
 
 p3 = plot_cells(cds,
            color_cells_by = "celltype.l2",
@@ -196,25 +223,31 @@ p3 = plot_cells(cds,
            label_cell_groups=FALSE, 
            label_leaves=TRUE, 
            label_branch_points=TRUE, 
-           graph_label_size=1.5) + 
-	theme(legend.position = "bottom",
-		legend.title = element_blank()) +
+           graph_label_size=1) + 
+	guides(color = guide_legend(override.aes = list(size=1))) +
+	theme(#legend.position = c(0.5, 0.1), legend.direction = "horizontal",
+		legend.title = element_blank(),
+		legend.background = element_blank(),
+		legend.text = element_text(size = 4),
+                legend.key.size = unit(1, 'mm')) +
 	ggtitle("Cell type") +
-        xlab("DC_1") +
+        xlab("") +
         ylab("DC_2")
 
 p4 <- DimPlot(d2n, sizes.highlight = .01, raster = F, pt.size = 0.5,  reduction = 'DC', cells.highlight = init_cells$cell) + 
 	ggtitle("Initial Cells") +  
-	theme(plot.title = element_text(size = 12, face = "plain"),
+	theme(plot.title = element_text(size = 7, face = "plain"),
 		axis.line=element_line(size=0.25)) + 
-	NoLegend()
+	NoLegend() +
+	xlab("DC_1") +
+        ylab("")
 
 
 
-png(paste0(plots_dir, "/Panel_C_BM_dataset.png"), width = 9, height = 4,  res=600, units= "in")
-p3 + p4  + p2 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 7),
-                                                                axis.title = element_text(size = 9),
-                                                                plot.title = element_text(size = 12, face = "bold"))
+svg(paste0(plots_dir, "/Panel_C_BM_dataset.svg"))
+p3 + p4  + p2 + plot_layout(ncol = 3, guides='collect')&theme(axis.text = element_text(size = 4),
+                                                                axis.title = element_text(size = 5),
+                                                                plot.title = element_text(size = 7, face = "bold"))
 dev.off()
 
 
@@ -225,20 +258,28 @@ obj.merge.query_norm = NormalizeData(obj.merge.query)
 
 #------------------------------------------Panel B-----------------------------------------------
 p2 <- FeaturePlot(obj.merge.query_norm, features = "GFI1B", reduction = 'DC', cells = WhichCells(obj.merge.query_norm, expression = gene == "GFI1B"),  pt.size = 0.01, raster = F) + 
-		xlim(c(-1.0, 0.75)) +
-		ylim(c(0.75, 1.5)) + NoLegend()
+		xlim(c(-1.2, 1.0)) +
+		ylim(c(0.75, 1.5)) + xlab("") +
+                ylab("DC_2") + NoLegend()
 p3 <- FeaturePlot(obj.merge.query_norm, features = "NFE2", reduction = 'DC', cells = WhichCells(obj.merge.query_norm, expression = gene == "NFE2"), pt.size = 0.01, raster = F) +
                 xlim(c(-1.2, 1.0)) +
-                ylim(c(0.75, 1.5)) + theme(legend.text = element_text(size = 7))
+                ylim(c(0.75, 1.5)) + theme(legend.position = c(0.2, 0.95), legend.direction="horizontal", legend.text = element_text(size = 3), legend.key.size = unit(2.5, "mm"), legend.spacing.y = unit(0.1, 'mm')) +
+		xlab("DC_1") +
+                ylab("")
 p4 <- FeaturePlot(obj.merge.query_norm,  features = "MYB", reduction = 'DC', cells = WhichCells(obj.merge.query_norm, expression = gene == "MYB"),  pt.size = 0.01, raster = F) +
                 xlim(c(-1.2, 1.0)) +
-                ylim(c(0.75, 1.5)) + NoLegend()
+                ylim(c(0.75, 1.5)) + 
+		xlab("") +
+                ylab("") + NoLegend()
  
-png(paste0(plots_dir, "/Panel_b_BM_dataset.png"), width = 9, height = 4,  res=600, units= "in")
-p2+p3+p4 + plot_layout(guides = "collect", ncol=3)&theme(axis.text = element_text(size = 7),
-                                                                axis.title = element_text(size = 9),
-                                                                plot.title = element_text(size = 12))
-dev.off()
+
+svg(paste0(plots_dir, "/Panel_B_BM_dataset.svg"))
+(p2|p3|p4) + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 4),
+                                                                axis.title = element_text(size = 5),
+                                                                plot.title = element_text(size = 7))
+dev.off() 
+
+
 
 
 ##------------------------------------------Time dist by dosage gene-----------------------------------
@@ -277,12 +318,13 @@ p = ggplot(time.list, aes(x = expr, y = time)) +
 	theme_bw() + 
 	xlab("Log Normalized UMI Expression") +
 	ylab("Pseudotime") +
-	theme(axis.text = element_text(size = 7),
-        	axis.title = element_text(size = 9),
-                plot.title = element_text(size = 12, face = "bold"))
+	theme(axis.text = element_text(size = 4),
+        	axis.title = element_text(size = 5),
+		strip.text = element_text(size = 5),
+                plot.title = element_text(size = 7, face = "bold"))
 
 
-png(paste0(plots_dir, "/Panel_D_BM_dataset.png"), width = 9, height = 3.33,  res=600, units= "in")
+svg(paste0(plots_dir, "/Panel_D_BM_dataset.svg"))
 p
 dev.off()
 
@@ -295,12 +337,13 @@ p = ggplot(time.list_pseudo, aes(y = time, x = expr)) +
         theme_bw() +
 	xlab("Log2 FC") +
         ylab("Pseudotime") +
-        theme(axis.text = element_text(size = 7),
-                axis.title = element_text(size = 9),
-                plot.title = element_text(size = 12, face = "bold"))
+        theme(axis.text = element_text(size = 4),
+                axis.title = element_text(size = 5),
+		strip.text = element_text(size = 5),
+                plot.title = element_text(size = 7, face = "bold"))
 
 
-png(paste0(plots_dir, "/Panel_E_BM_dataset.png"), width = 9, height = 3.33,  res=600, units= "in")
+svg(paste0(plots_dir, "/Panel_E_BM_dataset.svg"))
 p
 dev.off()
 
@@ -335,7 +378,7 @@ p = ggplot(d2n_corr_df, aes(x=as.factor(gene), y=corr)) +
   ylab("Spearman Correlation") +
   xlab("Gene")
 
-png(paste0(plots_dir, "/BM_dataset_integr_gene_corr_with_PT.png"), width = 9, height = 6,  res=600, units= "in")
+svg(paste0(plots_dir, "/BM_dataset_integr_gene_corr_with_PT.svg"), width = 118.8, height = 59.4,  res=720, units= "mm")
 p
 dev.off()
 
@@ -362,7 +405,7 @@ p = ggplot(time.list_pseudo, aes(x = time, y = expr)) +
         theme_bw()
 
 
-png(paste0(plots_dir, "/BM_dataset_integr_trans_gene_vs_time_guide_agg.png"), width = 9, height = 6,  res=600, units= "in")
+svg(paste0(plots_dir, "/BM_dataset_integr_trans_gene_vs_time_guide_agg.svg"), width = 118.8, height = 59.4,  res=720, units= "mm")
 p
 dev.off()
 
