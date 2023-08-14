@@ -65,8 +65,8 @@ x_values[which.max(pred_a)]
 # Ci
 l_i <- loess(DG_dt[guide_category %in% c("titration", "weismanTSS") & cell_line == "CRISPRi", .(dosage_gene_log2FC, dist2tss)], formula = "dosage_gene_log2FC ~ dist2tss" )
 pred_i <- predict(l_i, newdata = data.frame(dist2tss = x_values))
-x_values[which.min(pred_a)]
-# [1] 468
+x_values[which.min(pred_i)]
+# [1] 238
 
 ### (1) CRISPRi vs. CRISPRa cis gene FCs
 
