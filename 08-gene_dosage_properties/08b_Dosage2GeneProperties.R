@@ -22,7 +22,6 @@ library(scales)
 
 
 ## Dir
-## Dir
 setwd("/gpfs/commons/groups/lappalainen_lab/jdomingo/manuscripts/d2n/d2n_ms/08-gene_dosage_properties/")
 folder_name <- basename(getwd())
 data_dir = file.path("../../data", folder_name)
@@ -38,7 +37,7 @@ concat_dt <- rbind(concat_raw_dt[dosage_gene != "TET2", ],
                               dosage_gene = c(rep("GFI1B", length(range_fc)), rep("NFE2", length(range_fc)), rep("MYB", length(range_fc))), 
                               dosage_gene_log2FC = rep(range_fc, 3),
                               avg_log2FC = rep(range_fc, 3)))
-# concat_dt <- concat_raw_dt[dosage_gene != "TET2",]
+
 
 # Fold changes of all genes
 DE_dt <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/009-DEanalyses/processed_data/after_seurat4.3/d2n_DemuxHTOdCas9_Wilcoxon_AllGenesDE.RDS")
@@ -108,46 +107,31 @@ pB <- ggplot(ggdendro::segment(dd_d_data)) +
   theme(axis.line = element_blank(), axis.text = element_blank(), axis.ticks = element_blank(), axis.title= element_blank()) +
   ylab("") 
 p <- cowplot::plot_grid(pB, pA, align = "h", axis = "tb", nrow = 1, rel_widths = c(2/10, 8/10))
-ggsave(file.path(plots_dir, "08a_HeatmapFC_GeneProperties.pdf"), p, width = 5,  height = 12)
+# ggsave(file.path(plots_dir, "08a_HeatmapFC_GeneProperties.pdf"), p, width = 5,  height = 12)
 
-
-
+pA2 <- ggplot(plot_dt[gene == dosage_gene,], aes(x = dosage_gene_log2FC, y = gene)) +
+  geom_raster(aes(fill = transFC)) +
+  scale_fill_gradient2("Pred log2(FC)", low = "#377EB8", high = "#FF7F00", midpoint = 0, na.value = "grey80") +
+  theme_classic() +
+  theme(axis.line.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank()) +
+  theme(axis.line.y = element_blank(), axis.title.y = element_blank()) +
+  scale_x_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+  scale_y_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+  facet_grid(. ~ dosage_gene, scales = "free_x") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6)) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white"))
+pA2
+ggsave(file.path(plots_dir, "08a_DosageGeneFCrange.pdf"), pA2, width = 4,  height = 1.2)
 
 ## Qualitative values
 
-# Biotype
-symbols <- readRDS("../016-gene_annotations/processed_data/GA.0_IDsAnnotations.RDS")
-GA.0 <- setnames(unique(symbols[, .(external_gene_name, gene_biotype)]), c("gene", "gene_biotype"))
-GA.0[, value := ifelse(gene_biotype == "lncRNA", T, F)]
-GA.0[, gene_set := "lncRNA"]
-GA.0[, dataset := "Biotype"]
-
-# # Mohammadi
-# GA.2 <- readRDS("../016-gene_annotations/processed_data/GA.2_Mohammadi2019.RDS")
-
-# TFs
-GA.7 <- readRDS("../016-gene_annotations/processed_data/GA.7_TFs.RDS")[data_set == "Garcia-Alonso_2019",]
-GA.7[, dataset := "TFs"]
-
-# # TF targets of DGs
-# GA.8 <- readRDS("../016-gene_annotations/processed_data/GA.8_TFtargets.RDS")
-
-# OMIM
-GA.9 <- readRDS("../016-gene_annotations/processed_data/GA.9_DiseaseGenesOMIM.RDS")
-
-# GWAS
-GA.10 <- readRDS("../016-gene_annotations/processed_data/GA.10_GWASgenesUKB.RDS")
-
-# Housekeeping
-GA.11 <- readRDS("../016-gene_annotations/processed_data/GA.11_HousekeepingHsiao.RDS")
-
-
-cols = c("gene", "gene_set", "value", "dataset")
-ga_l <- list(GA.0, GA.7, GA.9, GA.10, GA.11)
-
-GA <- foreach(G = ga_l, .combine = rbind) %do% {
-  G[, .SD, .SDcols = cols]
-}
+qualitative_v <- list.files(processed_data_dir)[grepl("^GA.", list.files(processed_data_dir))]
+GA <- do.call("rbind",
+              lapply(qualitative_v, function(quantfile){
+                DT <- readRDS(file.path(processed_data_dir, quantfile))
+              })
+)
 
 
 
@@ -185,16 +169,19 @@ pC
 
 
 ## Quantitative annotation values
-quantfile_v <- list.files("../016-gene_annotations/processed_data/")[grepl("^GQ.[1-6]", list.files("../016-gene_annotations/processed_data/"))]
+quantfile_v <- list.files(processed_data_dir)[grepl("^GQ.", list.files(processed_data_dir))]
 GQ <- do.call("rbind",
               lapply(quantfile_v, function(quantfile){
-                DT <- readRDS(file.path("../016-gene_annotations/processed_data/", quantfile))
+                DT <- readRDS(file.path(processed_data_dir, quantfile))
               })
 )
 
 GQ[, scaled_value := rescale(value, to = c(0, 1)), metric]
 
-gq_mat_dt <- dcast.data.table(GQ[, .(gene, metric, scaled_value)], formula = metric ~ gene, value.var = "scaled_value")
+
+
+
+gq_mat_dt <- dcast(GQ[, .(gene, metric, scaled_value)], metric ~ gene, value.var = "scaled_value")
 gq_mat <- as.matrix(gq_mat_dt[, 2: ncol(gq_mat_dt)])
 rownames(gq_mat) <- gq_mat_dt$metric
 
@@ -219,15 +206,14 @@ pD <- ggplot(GQ, aes(x = metric, y = gene)) +
   theme(strip.text.x.top = element_text(angle = 90))
 pD
 
-p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/20, 8.5/20, 1.5/15, 9/20))
+p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/20, 7.75/20, 1.75/15, 10/20))
 p
-ggsave("plots/20230404_01_Megaheatmap_QualQuantAnnot.pdf", p, width = 15, height = 12)
-ggsave("plots/20230404_01_Megaheatmap_QualQuantAnnot.png", p, width = 15, height = 12)
+ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
 
 
 ## (4) Correlation between quantitative gene annotations and all sigmoid features
 
-sig_feat <-  c("slope_IF", "abs_slope_IF","min_assmp","max_assmp", "min_max_range", "x_IF")
+sig_feat <-  c("slope_IF", "abs_slope_IF","min_assmp","max_assmp", "min_max_range")
 
 Cor_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% {
   dt1 <- merge.data.table(GQ, PT_singles[dosage_gene == dg & non_monotonic == F & responsive == T, ], by = "gene")
@@ -248,21 +234,24 @@ Cor_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% {
   dt4[, dosage_gene := dg]
 }
 
-Cor_dt[, fdr := p.adjust(pval, method = "fdr")]
 Cor_dt[, log10_pval := -log10(pval)]
-Cor_dt[, log10_fdr := -log10(fdr)]
 
+# Order metrics same as heatmap
+Cor_dt[, metric := factor(metric, levels = ord_gq)]
 
-p <- ggplot(Cor_dt, aes(x= sigmoid_param, y = metric)) +
+p <- ggplot(Cor_dt, aes(y = sigmoid_param, x = metric)) +
   geom_point(aes(color=r, size=log10_pval)) +
-  facet_grid(dataset ~ dosage_gene, scales = "free_y", space = "free_y") +
+  facet_grid(dosage_gene ~ dataset, scales = "free_x", space = "free_x") +
   scale_color_gradient2(low = "#377EB8", high = "#FF7F00", midpoint = 0) +
   theme(panel.grid = element_blank()) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), axis.title.x = element_blank())  +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
-  theme(strip.text.y.right = element_text(angle = 0))
+  theme(strip.text.y.right = element_text(angle = 0)) +
+  labs(y = "Sigmoid parameter") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
 p
-ggsave("plots/20230405_01_CorSigmoidParamsVsQuantGeneAnnot.pdf", p, width = 9, height = 9)
+ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 9, height = 6.5)
 
 ## Aggregated values
 PT_singles[non_monotonic == F & responsive == T, .N, dosage_gene]
