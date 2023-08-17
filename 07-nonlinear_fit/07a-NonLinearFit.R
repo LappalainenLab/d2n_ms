@@ -424,25 +424,3 @@ fwrite(file = file.path(processed_data_dir, "D2N_S4LoessModelFits.txt"), Fit_cur
 
 
 
-#### TEMP for Tuuli
-GA.9 <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/016-gene_annotations/processed_data/GA.9_DiseaseGenesOMIM.RDS")
-GA.10 <- readRDS("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/016-gene_annotations/processed_data/GA.10_GWASgenesUKB.RDS")
-
-
-omim_genes <- unique(GA.9[value == T, gene])
-gwas_genes <- unique(GA.10[value == T, gene])
-
-union_genes <- omim_genes[omim_genes %in% gwas_genes]
-
-dt_unresp <- S4Param_dt[, sum(unresponsive), gene]
-
-plot_genes <- dt_unresp[gene %in% union_genes & V1 < 2, gene]
-
-p <- ggplot(DE_dt[gene %in% plot_genes & dosage_gene != "TET2", ], aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
-  facet_grid(gene ~ dosage_gene, scales = "free") +
-  geom_point(color = "grey20", alpha=0.7) +
-  geom_line(data = Fit_curves_dt[gene %in% plot_genes & dosage_gene != "TET2", ], color="#FF7F00", linewidth = 0.75) +
-  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
-  labs(x="Cis gene log2(FC)", y="Trans gene log2(FC)")
-p
-ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/temp/ForTuuli/OMIM_GWAS_DosageResponseCurves.pdf", p, width = 5, height = 13)
