@@ -2,7 +2,7 @@ library(here)
 here::i_am("integrate_d2n_aml_ref.R")
 
 #specify monocle lib path
-#.libPaths( c( "/proj/lappalainen_lab1/users/marii/chip_seq_ann" , .libPaths() ) )
+.libPaths( c( "/proj/lappalainen_lab1/users/marii/chip_seq_ann" , .libPaths() ) )
 
 library(stringr)
 library(monocle3)
@@ -18,6 +18,7 @@ library(Matrix)
 library(patchwork)
 library(destiny)
 library(viridis)
+library(grid)
 library(geosphere)
 library(lsa)
 library(foreach)
@@ -37,33 +38,32 @@ plots_dir = file.path("../../plots", folder_name)
 
 
 
-##------------------------------------------Preparation of reference-----------------------------
-#reference = readRDS(paste0(data_dir, "/seurat_main_cohort.rds"))
-#cells = unique(reference@meta.data$ct_simple[!str_detect(reference@meta.data$ct_simple, "B ") & !str_detect(reference@meta.data$ct_simple, "T ")])
-#reference <- subset(reference, subset = ct_simple %in% cells) 
-#alldata.list <- SplitObject(reference, split.by = "cohort")
-#for (i in 1:length(alldata.list)) {
-#    alldata.list[[i]] <- NormalizeData(alldata.list[[i]], verbose = FALSE)
-#    alldata.list[[i]] <- FindVariableFeatures(alldata.list[[i]], selection.method = "vst",
-#        nfeatures = 5000, verbose = FALSE)
-#}
-#alldata.anchors <- FindIntegrationAnchors(object.list = alldata.list, dims = 1:30,
-#    reduction = "cca", anchor.features = 5000)
-#reference <- IntegrateData(anchorset = alldata.anchors, dims = 1:30, new.assay.name = "CCA")
-#reference = ScaleData(reference, verbose = FALSE)
-#reference <- RunPCA(reference, npcs = 30, verbose = FALSE)
-#reference <- RunUMAP(reference, dims = 1:30)
-#saveRDS(reference, paste0(processed_data_dir, "/aml_reference_integrated_cca.rds"))
-
-
-
 ##------------------------------------------AML dataset-----------------------------------------
 
+##------------------------------------------Preparation of reference-----------------------------
+if (F){
+reference = readRDS(paste0(data_dir, "/seurat_main_cohort.rds"))
+alldata.list <- SplitObject(reference, split.by = "cohort")
+for (i in 1:length(alldata.list)) {
+    alldata.list[[i]] <- FindVariableFeatures(alldata.list[[i]], selection.method = "vst",
+        nfeatures = 5000, verbose = FALSE)
+}
+alldata.anchors <- FindIntegrationAnchors(object.list = alldata.list, dims = 1:30,
+    reduction = "cca", anchor.features = 5000)
+reference <- IntegrateData(anchorset = alldata.anchors, dims = 1:30, new.assay.name = "CCA")
+reference = ScaleData(reference, verbose = FALSE)
+reference <- RunPCA(reference, npcs = 30, verbose = FALSE)
+reference <- RunUMAP(reference, dims = 1:30)
+saveRDS(reference, paste0(processed_data_dir, "/aml_reference_integrated_cca.rds"))
+}
+
 # Load reference dataset
-reference =  readRDS(paste0(processed_data_dir, "/aml_reference_integrated_cca.rds"))
-cells = unique(reference@meta.data$ct_simple[!str_detect(reference@meta.data$ct_simple, "B ") & !str_detect(reference@meta.data$ct_simple, "T ")])
-reference <- subset(reference, subset = ct_simple %in% cells)
-DefaultAssay(reference) = "CCA"
+if (F){
+reference = readRDS(paste0(processed_data_dir, "/aml_reference_integrated_cca.rds"))
+reference = subset(reference, subset = (cohort == 'Cohort A') | (cohort == 'Triana et al. (healthy)'))
+reference <- subset(reference, subset = ct_simple %in% c("Early myeloid", "Immature", "Erythroid")) 
+reference = RunPCA(reference, npcs = 30, verbose = FALSE)
+reference = RunUMAP(reference, reduction = "pca", return.model = TRUE, dims=1:30)
 
 
 ##------------------------------------------Load and preprocess D2N dataset---------------------
@@ -73,10 +73,10 @@ counts <- counts[-(which(rownames(counts) %in% c('CRISPRi', 'CRISPRa'))),]
 d2n <- subset(d2n_full, features = rownames(counts))
 
 d2n = NormalizeData(d2n)
-VariableFeatures(d2n) = rownames(d2n[["RNA"]])
+d2n = ScaleData(d2n)
 d2n[["CCA"]] = d2n[["RNA"]]
-reference = RunPCA(reference)
-reference <- RunUMAP(reference, dims = 1:30, return.model = T)
+DefaultAssay(d2n) = "CCA"
+VariableFeatures(d2n) = rownames(d2n[["CCA"]])
 
 ##------------------------------------------Integration------------------------------------------
 anchors <- FindTransferAnchors(
@@ -87,18 +87,23 @@ anchors <- FindTransferAnchors(
   reference.assay = "CCA",
   query.assay = "CCA",
   features = intersect(rownames(x = reference), rownames(x = d2n)),
-  dims = 1:50)
+  dims = 1:30)
 
 d2n <- MapQuery(
   anchorset = anchors,
   query = d2n,
   reference = reference,
   refdata = list(
-    ct = "ct"),
+    ct = "ct",
+    status = "status",
+    ct_simple = "ct_simple"),
+  reference.reduction = "pca",
   reduction.model = "umap")
 
 ###------------------------------------------UMAP for shared embeddings---------------------------
 d2n$ct <- d2n$predicted.ct
+d2n$status = d2n$predicted.status
+d2n$ct_simple = d2n$predicted.ct_simple
 d2n$group <- 'query'
 reference$group <- 'reference'
 
@@ -110,7 +115,7 @@ DefaultAssay(d2n) <- 'CCA'
 
 obj.merge <- merge(DietSeurat(reference, assays = 'CCA'), DietSeurat(d2n, assays = 'CCA') )
 obj.merge[['pca']] <- emb.merge
-obj.merge <- RunUMAP(obj.merge, dims = 1:50, reduction="pca")
+obj.merge <- RunUMAP(obj.merge, dims = 1:30, reduction="pca")
 
 
 
@@ -121,153 +126,174 @@ obj.merge[['DC']] <- CreateDimReducObject(embeddings = df.map@eigenvectors*1000,
 d2n_types = unique(d2n$ct)
 ref_types = setdiff(unique(reference$ct), d2n_types)
 obj.merge$ct = factor(obj.merge$ct, levels=c(d2n_types, ref_types))
-cols = DiscretePalette(25)
- 
+saveRDS(obj.merge, paste0(processed_data_dir, "/integrated_SeuratObject_AML_d2n.RDS"))
+}
+
+obj.merge = readRDS(paste0(processed_data_dir, "/integrated_SeuratObject_AML_d2n.RDS"))
+DefaultAssay(obj.merge) <- "CCA"
+
+cols = DiscretePalette(24)
+Idents(obj.merge) <- obj.merge@meta.data$group
+to_plot_obj.merge = subset(obj.merge, downsample=10000)
+
+
 #------------------------------------------Panel A---------------------------------------------------
-p1 <- DimPlot(obj.merge, cols = alpha(cols, 0.33), group.by = 'ct',  pt.size = 0.01, raster = F) + NoLegend() + ggtitle("All")
-p2 <- DimPlot(obj.merge,  cols = alpha(cols, 0.33), group.by = 'ct', cells = Cells(d2n),  pt.size = 0.01, raster = F) + NoLegend() + ggtitle("Perturbed")
-p3 <- DimPlot(obj.merge,   cols = alpha(cols, 0.33), group.by = 'ct', cells = Cells(reference),  pt.size = 0.01, raster = F) + NoLegend() + ggtitle("Reference")
-p4 =  DimPlot(obj.merge,  cols = alpha(cols, 0.33), group.by = 'ct', cells = Cells(d2n), raster = F) + theme(legend.position= "bottom",
+p1 <- DimPlot(to_plot_obj.merge, cols = alpha(cols, 0.33), group.by = 'ct',  pt.size = 0.01, raster = F) +
+	NoLegend() +
+        ggtitle("All") +
+        xlab("") +
+        ylab("UMAP_2")
+p2 <- DimPlot(to_plot_obj.merge,  cols = alpha(cols, 0.33), group.by = 'ct', cells = WhichCells(to_plot_obj.merge, expression =  group == "query"),  pt.size = 0.01, raster = F) + 
+	NoLegend() +
+        ggtitle("Perturbed") +
+        xlab("UMAP_1") +
+        ylab("")
+p3 <- DimPlot(to_plot_obj.merge,   cols = alpha(cols, 0.33), group.by = 'ct', cells = WhichCells(to_plot_obj.merge, expression =  group == "reference"),  pt.size = 0.01, raster = F) + 
+	NoLegend() +
+        ggtitle("Reference") +
+        xlab("") +
+        ylab("")
+p4 =  DimPlot(obj.merge,  cols = alpha(cols, 0.33), group.by = 'ct', cells = WhichCells(to_plot_obj.merge, expression =  group == "query"), raster = F) + theme(legend.position= "bottom",
 																legend.text = element_text(size = 9),
-																legend.key.size = unit(2, 'cm'))
+																legend.key.size = unit(7, 'pt'))
 
-leg = gtable_filter(ggplot_gtable(ggplot_build(p4)), "guide-box")
+leg = cowplot::get_legend(p4)
 
-png(paste0(plots_dir, "/Panel_A_AML_dataset.png"), width = 9, height = 4.5,  res=720, units= "in")
-(p1|p2|p3)/leg + plot_layout(nrow = 2, height = c(4, 1))&theme(axis.text = element_text(size = 7),
-                                                                axis.title = element_text(size = 9),
-                                                                plot.title = element_text(size = 12))
+svg(paste0(plots_dir, "/Panel_A_AML_dataset.svg"), width = 8.3, height=3.1)
+p1 + p2 + p3 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
+                                           axis.title = element_text(size = 11),
+                                           plot.title = element_text(size = 12))
+dev.off()
+
+svg(paste0(plots_dir, "/Panel_A_AML_dataset_legend.svg"), width=8.3, height=0.5)
+grid.newpage()
+grid.draw(leg)
+dev.off()
+reference = subset(obj.merge, subset = group == "reference")
+
+cols = DiscretePalette(24)
+p1 <- DimPlot(reference, cols = alpha(cols, 0.33), group.by = 'cohort',  pt.size = 0.01, raster = F) +
+        NoLegend() +
+        xlab("") +
+        ylab("UMAP_2")
+p2 <- DimPlot(reference, cols = alpha(cols, 0.33), group.by = 'patient',  pt.size = 0.01, raster = F) +
+        NoLegend() +
+        xlab("") +
+        ylab("UMAP_2")
+p3 <- DimPlot(reference, cols = alpha(cols, 0.33), group.by = 'ct_simple',  pt.size = 0.01, raster = F) +
+        xlab("") +
+        ylab("UMAP_2")
+svg(paste0(plots_dir, "/new_aml_ref.svg"), width = 8.3, height=3.1)
+p1 + p2 + p3 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
+                                           axis.title = element_text(size = 11),
+                                           plot.title = element_text(size = 12))
 dev.off()
 
  
-obj.merge@meta.data$cell_name = rownames(obj.merge@meta.data)
- 
-obj.merge.query <- subset(obj.merge, cells = Cells(d2n))
-d2n = subset(obj.merge, cells = Cells(obj.merge.query))
-d2n[['DC']] <- obj.merge.query[['DC']]
-obj.merge.query_norm = NormalizeData(obj.merge.query)
-
 ##------------------------------------------Pseudotime analysis---------------------------------------
-
 ###-----------------------------------------Erythroid Cells-------------------------------------------
 
-eryth.monocle = subset(d2n, subset = (ct == "Early erythroid progenitor") | (ct == "Late erythroid progenitor"))
+if (T){
+eryth.monocle = subset(obj.merge, subset = (ct %in% c("Aberrant erythroid",
+                                                        "Early erythroid progenitor",
+                                                        "Late erythroid progenitor",
+                                                        "Erythro-myeloid progenitors")))
 eryth.monocle[['umap']] = NULL
 eryth.monocle[['umap']] <- eryth.monocle[['DC']]
 
 eryth.monocle[['umap']]@cell.embeddings <- eryth.monocle[['umap']]@cell.embeddings[,1:2]
 
-
 ##------------------------------------------Select root cells------------------------------------------
-early_eryth = as.data.table(subset(eryth.monocle, subset = (ct== "Early erythroid progenitor"))[['umap']]@cell.embeddings[,1:2])
-early_eryth$cell = colnames(subset(eryth.monocle, subset = (ct== "Early erythroid progenitor")))
-lim_y = quantile(early_eryth$umap_2, probs = c(0.9, 1.0))
-lim_x =  quantile(early_eryth$umap_1, probs = c(0.3, 0.6))
+early_eryth = as.data.table(subset(eryth.monocle, subset = (ct== "Erythro-myeloid progenitors"))[['umap']]@cell.embeddings[,1:2])
 
-early_eryth %>% filter(umap_1 > lim_x[1] & umap_1 < lim_x[2])  %>% filter(umap_2 > lim_y[1] & umap_2 < lim_y[2])-> early_eryth
+lim_x = quantile(early_eryth$umap_1, probs=0.85)
+lim_y =  quantile(early_eryth$umap_2, probs=0.85)
 
+early_eryth$cell = colnames(subset(eryth.monocle, subset = (ct== "Erythro-myeloid progenitors")))
 
-eryth.centr = centroid(early_eryth[, 1:2])
-
-start = Sys.time()
-dist_cent = rbindlist(foreach(cell = early_eryth$cell) %dopar% {
-        data.table(cell, 
-			as.numeric(dist(cbind(as.vector(eryth.centr), 
-			as.vector(subset(eryth.monocle, 
-						subset = (ct == "Early erythroid progenitor"))[['umap']]@cell.embeddings[cell,1:2])))))
-})
-print(Sys.time() - start)
-colnames(dist_cent) = c("cell", "dist")
-dist_cent %>% arrange(desc(abs(dist))) %>% head(40) %>% select(cell) -> init_cells
-
+early_eryth %>%
+        filter(umap_1 > lim_x & umap_2 < lim_y) -> init_cells
 ##------------------------------------------Trajectory inference------------------------------------------
 cds <- as.cell_data_set(x = eryth.monocle, assay = "CCA", reductions = "umap")
-cds <- cluster_cells(cds = cds, reduction_method = "UMAP")#, k=5)
+cds <- cluster_cells(cds = cds, reduction_method = "UMAP", k=15)
 cds <- learn_graph(cds)
 
 
 ##------------------------------------------Pseudotime Calculation-----------------------------------------
 cds <- order_cells(cds, root_cells = init_cells$cell)
-cds@principal_graph_aux@listData$UMAP$pseudotime <- cds@principal_graph_aux@listData$UMAP$pseudotime/max(cds@principal_graph_aux@listData$UMAP$pseudotime)
-d2n$DC.time <-   cds@principal_graph_aux@listData$UMAP$pseudotime
-saveRDS(d2n, paste0(processed_data_dir, "/d2n_SeuratObj_PostQC_dCas9_NewMD_PT_AML.RDS"))
 
-##------------------------------------------Panel C--------------------------------------------------------
- 
+quantile(cds@principal_graph_aux@listData$UMAP$pseudotime)
+
+cds@principal_graph_aux@listData$UMAP$pseudotime <- cds@principal_graph_aux@listData$UMAP$pseudotime/max(cds@principal_graph_aux@listData$UMAP$pseudotime)
+eryth.monocle@meta.data$DC.time <-   cds@principal_graph_aux@listData$UMAP$pseudotime
+eryth.monocle@meta.data$label = paste0(eryth.monocle@meta.data$ct, "_", eryth.monocle@meta.data$group)
+eryth.monocle@meta.data$m_cluster = cds@clusters$UMAP$clusters
+saveRDS(eryth.monocle, paste0(processed_data_dir, "/integrated_erythro_SeuratObject_AML_full.RDS"))
+}
+eryth.monocle = readRDS(paste0(processed_data_dir, "/integrated_erythro_SeuratObject_AML_full.RDS"))
+d2n = subset(eryth.monocle, subset = group == "query")
+reference = subset(eryth.monocle, subset = group == "reference")
+DefaultAssay(d2n) = "CCA"
+
+
+##------------------------------------------Panel B--------------------------------------------------------
 p2 = plot_cells(cds,
            color_cells_by = "pseudotime",
            label_cell_groups=FALSE,
            label_leaves=FALSE,
            label_branch_points=FALSE,
            graph_label_size=1.5) +
-        theme(legend.position = "bottom") +
-	ggtitle("Pseudotime") + 
-	xlab("DC_1") +
-	ylab("DC_2")
+        xlab("") +
+        ylab("DC_2") +
+        labs(color = "Pseudotime") +
+        theme(legend.position = c(0.15, 0.9),
+               legend.title = element_text(size = 9),
+               legend.direction="horizontal",
+               legend.text = element_text(size = 9),
+               legend.key.size = unit(7, "pt"),
+               legend.spacing.y = unit(3, 'pt'))
 
-p3 = plot_cells(cds,
-           color_cells_by = "ct",
-           show_trajectory_graph = F,
-           label_cell_groups=FALSE,
-           label_leaves=TRUE,
-           label_branch_points=TRUE,
-           graph_label_size=1.5) +
-        theme(legend.position = "bottom",
-                legend.title = element_blank()) +
-        ggtitle("Cell type") +
-        xlab("DC_1") +
+
+
+p3 = DimPlot(eryth.monocle, sizes.highlight = .01, label=F, raster = F, pt.size = 0.5,  reduction = 'DC', group.by = "ct") +
+        theme(plot.title = element_text(size = 12, face = "plain"),
+                axis.line=element_line(size=0.25),
+                legend.position = c(0.15, 0.9),
+                #legend.direction = "horizontal",
+                legend.text = element_text(size = 9),
+                legend.key.size = unit(7, 'pt'),
+                legend.background = element_blank(),
+                legend.title = element_text(size=9)) +
+        xlab("") +
+        ggtitle("") +
         ylab("DC_2")
 
-p4 <- DimPlot(d2n, sizes.highlight = .01, raster = F, pt.size = 0.5,  reduction = 'DC', cells.highlight = init_cells$cell) +
-        ggtitle("Initial Cells") +
+p4 <- DimPlot(eryth.monocle, sizes.highlight = .01, raster = F, pt.size = 0.5,  reduction = 'DC', cells.highlight = init_cells$cell) +
         theme(plot.title = element_text(size = 12, face = "plain"),
-                axis.line=element_line(size=0.25)) +
-        NoLegend()
+                axis.line=element_line(size=0.25),
+                legend.position = c(0.15, 0.9),
+                #legend.direction = "horizontal",
+                legend.text = element_text(size = 9),
+                legend.key.size = unit(7, 'pt'),
+                legend.background = element_blank(),
+                legend.title = element_text(size=9)) +
+        scale_color_manual(name = "", labels = c("other", "centroid"), values = c("gray", 'red')) +
+        xlab("DC_1") +
+        ylab("")
 
 
 
-png(paste0(plots_dir, "/Panel_C_AML_dataset.png"), width = 9, height = 4,  res=600, units= "in")
-p3 + p4  + p2 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 7),
-                                                                axis.title = element_text(size = 9),
+svg(paste0(plots_dir, "/Panel_B_AML_dataset_full.svg"), width = 8.3, height=3.1)
+p3 + p4  + p2 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
+                                                                axis.title = element_text(size = 11),
                                                                 plot.title = element_text(size = 12, face = "bold"))
 dev.off()
-
-#------------------------------------------Panel B-----------------------------------------------
-p2 <- FeaturePlot(obj.merge.query_norm, 
-			features = "GFI1B", 
-			reduction = 'DC', 
-			cells = WhichCells(obj.merge.query_norm, expression = gene == "GFI1B"),  
-			pt.size = 0.01, 
-			raster = F) +
-	NoLegend()
-p3 <- FeaturePlot(obj.merge.query_norm, 
-			features = "NFE2", 
-			reduction = 'DC', 
-			cells = WhichCells(obj.merge.query_norm, expression = gene == "NFE2"), 
-			pt.size = 0.01, 
-			raster = F) +
-	theme(legend.text = element_text(size = 7))
-
-p4 <- FeaturePlot(obj.merge.query_norm,  
-			features = "MYB", 
-			reduction = 'DC', 
-			cells = WhichCells(obj.merge.query_norm, expression = gene == "MYB"),  
-			pt.size = 0.01, 
-			raster = F) +
-	NoLegend()
- 
-png(paste0(plots_dir, "/Panel_b_AML_dataset.png"), width = 9, height = 4,  res=600, units= "in")
-p2+p3+p4 + plot_layout(guides = "collect", ncol=3)&theme(axis.text = element_text(size = 7),
-                                                                axis.title = element_text(size = 9),
-                                                                plot.title = element_text(size = 12))
-dev.off()
-
 
 
 ##------------------------------------------Time dist by dosage gene-----------------------------------
 d2n_logFC = readRDS(paste0(data_dir, "/d2n_DemuxHTOdCas9_Wilcoxon_AllGenesDE.RDS"))
 
-d2n_true_erythro = subset(d2n, subset = DC_1 < eryth.centr[1])
+d2n_true_erythro = d2n
 gene.set = c("GFI1B", "NFE2", "MYB")
 
 d2n_true_erythro_norm = NormalizeData(d2n_true_erythro)
@@ -282,109 +308,315 @@ time.list_pseudo <- rbindlist(lapply(unique(d2n_true_erythro_norm$guide_crispr),
   out = data.table(gene = g, time = mean(d2n_true_erythro_norm$DC.time[ which(d2n_true_erythro_norm$guide_crispr == x) ], na.rm = T), expr = d2n_logFC %>%
                                                                                                                         filter((guide_1 == guide) & (cell_line == c_l)) %>%
                                                                                                                         select(dosage_gene_log2FC) %>%
-                                                                                                                        distinct())
-  colnames(out) = c("gene", "time", "expr")
+                                                                                                                        distinct(),
+			std_time = sd(d2n_true_erythro_norm$DC.time[ which(d2n_true_erythro_norm$guide_crispr == x) ], na.rm = T))
+  colnames(out) = c("gene", "time", "expr", "std_time")
   out
-})) 
- 
- 
+}))
+
 time.list$gene = factor(time.list$gene, levels = c("GFI1B", "NFE2", "MYB"))
 
 ##------------------------------------------Panel D-------------------------------------------------
 
 p = ggplot(time.list, aes(x = expr, y = time)) +
-        geom_point(alpha=0.5, size=1) +
+        geom_hex() +
+        stat_bin2d(bins = 50, show.legend = F) +
+        scale_fill_gradient(low = "grey85", high = "grey30", guide = guide_colorbar(direction = "horizontal", barheight = 0.5))  +
         geom_smooth(data = time.list %>% filter(!expr == 0.0),
-                        method=lm, alpha=0.5) +
+                        method=lm, alpha=0.5, color="#FF7F00") +
         facet_wrap(~ gene, scale = "free_x") +
         theme_bw() +
-        xlab("Log Normalized UMI Expression") +
+        ylim(c(0.0, 1.0)) +
+        xlab("Cis gene normalized UMI expression") +
         ylab("Pseudotime") +
-        theme(axis.text = element_text(size = 7),
-                axis.title = element_text(size = 9),
+        theme(legend.key = element_blank(),
+                legend.position = "bottom",
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.text = element_text(size = 9),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
                 plot.title = element_text(size = 12, face = "bold"))
- 
- 
-png(paste0(plots_dir, "/Panel_D_AML_dataset.png"), width = 9, height = 3.33,  res=600, units= "in")
+
+svg(paste0(plots_dir, "/Panel_D_AML_dataset_d2n_full.svg"), width = 8.3, height=3.85)
 p
 dev.off()
+
+
+
+
+
 
 ##------------------------------------------Panel E------------------------------------------
 time.list_pseudo %>% filter(gene %in% gene.set) -> time.list_pseudo
-p = ggplot(time.list_pseudo, aes(y = time, x = expr)) +
-        geom_point(size = 1, alpha = 0.75) +
-        geom_smooth(method=loess, alpha = 0.25, size = 0.75) +
+time.list_pseudo$gene = factor(time.list_pseudo$gene, levels = c("GFI1B", "NFE2", "MYB"))
+
+p = ggplot(time.list_pseudo, aes(y = time, x = expr, ymin = time - 1 * std_time, ymax = time + 1 * std_time)) +
+        geom_point(size = 1, alpha = 0.5) +
+        geom_linerange(alpha=0.25, size=0.25) +        
+	geom_smooth(method=loess, alpha = 0.25, size = 0.75, color="#FF7F00") +
         facet_wrap(~ gene, scale = "free_x") +
         theme_bw() +
-        xlab("Log2 FC") +
-        ylab("Pseudotime") +
-        theme(axis.text = element_text(size = 7),
-                axis.title = element_text(size = 9),
+	coord_cartesian(ylim = c(0.0, 1.0), expand = FALSE) +
+        xlab("Cis gene log2(FC)") +
+        ylab("Mean pseudotime") +
+        theme(axis.text = element_text(size = 9),
+                legend.key = element_blank(),
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
                 plot.title = element_text(size = 12, face = "bold"))
- 
 
-png(paste0(plots_dir, "/Panel_E_AML_dataset.png"), width = 9, height = 3.33,  res=600, units= "in")
+png(paste0(plots_dir, "/Panel_E_AML_dataset_d2n_full.png"), width = 8.3, height=3.24, res=720, units="in")
 p
 dev.off()
 
-##------------------------------------Gene PT correlation---------------------------------------
-start = Sys.time()
-d2n_true_erythro_corr_df = rbindlist(foreach(gene = rownames(d2n_true_erythro)) %dopar% {
-        c = cor.test(d2n_true_erythro$DC.time, as.vector(d2n_true_erythro[gene, ]@assays$CCA@data), method = "spearman")$estimate
-        p = cor.test(d2n_true_erythro$DC.time, as.vector(d2n_true_erythro[gene, ]@assays$CCA@data), method = "spearman")$p.value
-        data.table(gene = gene, corr = c, pval = p)
-})
-Sys.time() - start
 
-d2n_true_erythro_corr_df %>% 
-	drop_na() %>% 
-	filter(pval < 0.01) %>% 
-	arrange(desc(corr)) -> d2n_true_erythro_corr_df
-
-d2n_true_erythro_corr_df$gene = factor(d2n_true_erythro_corr_df$gene, levels = d2n_true_erythro_corr_df$gene)
-d2n_true_erythro_corr_df$pval = p.adjust(d2n_true_erythro_corr_df$pval, method = "bonferroni")
-
-p = ggplot(d2n_true_erythro_corr_df, aes(x=as.factor(gene), y=corr)) +
-  geom_segment( aes(x=as.factor(gene), xend=as.factor(gene), y=0, yend=corr), color="grey") +
-  geom_point( color="orange") +
-  theme_light() + 
-  theme( 
-    panel.grid.major.x = element_blank(), 
-    panel.border = element_blank(), 
-    axis.ticks.x = element_blank(), 
-    axis.text.x = element_text(angle=90, size=6) 
-  ) + 
-  guides(size = "none") + 
-  ylab("Spearman Correlation") + 
-  xlab("Gene")    
-
-png(paste0(plots_dir, "/AML_dataset_integr_gene_corr_with_PT.png"), width = 9, height = 6,  res=600, units= "in")
-p
-dev.off()
- 
-# Top 10 corr genes with PT
-d2n_true_erythro_corr_df %>% arrange(desc(abs(corr))) %>% head(10) %>% select(gene) -> corr_genes
-
-time.list_pseudo <- rbindlist(lapply(unique(d2n_true_erythro_norm$guide_crispr), function(x) {
-  guide = unlist(str_split(x, pattern = "-"))[1]
-  c_l = unlist(str_split(x, pattern = "-"))[2]
-  out = data.table(d2n_logFC %>%
-                              filter((guide_1 == guide) & (cell_line == c_l) & (gene %in% corr_genes$gene)) %>%
-                              select(gene, avg_log2FC) %>%
-                              distinct(),
-                    time = mean(d2n_true_erythro_norm$DC.time[ which(d2n_true_erythro_norm$guide_crispr == x) ], na.rm = T))
-  colnames(out) = c("gene", "expr", "time")
-  out
+#------------------------------------------NOT_USED----------------------------------------------------
+#----------------------Pseudotime_analysis_for_Ref_dataset_and_expression_averaged_d2n-----------------
+if (F){
+ncells = 20
+d2n_true_erythro_norm_sub = subset(d2n_true_erythro_norm, subset = gene %in% gene.set)
+d2n_true_erythro_norm_sub = ScaleData(d2n_true_erythro_norm_sub)
+time.list_pseudo_exp <- rbindlist(lapply(gene.set, function(y){
+        temp_d2n = subset(d2n_true_erythro_norm, subset = gene == y)
+	rbindlist(lapply(seq(1, ncol(d2n_true_erythro_norm_sub@assays$CCA), ncells), function(x) {
+          as.data.frame(t(temp_d2n@assays$CCA[y])) %>% arrange(pick(y)) %>% slice(x:(x + ncells)) %>% rownames -> temp_cells
+          out = data.table(gene = y,
+                                time = mean(temp_d2n@meta.data[temp_cells,]$DC.time, na.rm = T),
+                                expr = mean(temp_d2n@assays$CCA[y, temp_cells], na.rm = T),
+                                bin = as.integer(x / ncells) + 1,
+                                std_time = sd(temp_d2n@meta.data[temp_cells,]$DC.time, na.rm = T),
+                                std_expr = sd(temp_d2n@assays$CCA[y, temp_cells], na.rm = T))
+          colnames(out) = c("gene", "time", "expr", "bin", "std_time", "std_expr")
+          out 
+        }))
 }))
- 
-p = ggplot(time.list_pseudo, aes(x = time, y = expr)) +
-        geom_point() +
-        #geom_smooth(method=glm) +
-        facet_wrap(~ gene) +
-        theme_bw()
 
 
-png(paste0(plots_dir, "/AML_dataset_integr_trans_gene_vs_time_guide_agg.png"), width = 9, height = 6,  res=600, units= "in")
+time.list_pseudo_super = c()
+time.list_pseudo_exp$dataset = "D2N"
+bind_rows(time.list_pseudo_super, time.list_pseudo_exp) -> time.list_pseudo_super
+
+
+#------------------------------------------Reference AML---------------------------------------------------
+reference_aml = subset(reference, subset = (cohort == "Cohort A") & (patient != "A.0"))
+#------------------------------------------Time dist by dosage gene-----------------------------------
+gene.set = c("GFI1B", "NFE2", "MYB")
+
+time.list <- rbindlist(lapply(gene.set, function(x) {
+  return(data.table(gene = x, time = reference_aml$DC.time, expr = reference_aml@assays$CCA@data[x,], ct = reference_aml@meta.data$ct, status = reference_aml@meta.data$status))
+}))
+
+time.list$gene = factor(time.list$gene, levels = c("GFI1B", "NFE2", "MYB"))
+
+#Hex version
+p = ggplot(time.list, aes(x = expr, y = time, color = status)) +
+        geom_hex() +
+        stat_bin2d(bins = 50, show.legend = F) +
+        scale_fill_gradient(low = "grey85", high = "grey30", guide = guide_colorbar(direction = "horizontal", barheight = 0.5))  +
+        geom_smooth(data = time.list %>% filter(!expr == 0.0),
+                        method=lm, alpha=0.5, color="#FF7F00") +
+        facet_wrap(~ gene, scale = "free_x") +
+        theme_bw() +
+        ylim(c(0.0, 1.0)) +
+        xlab("Cis gene normalized UMI expression") +
+        ylab("Pseudotime") +
+        theme(legend.key = element_blank(),
+                legend.position = "bottom",
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.text = element_text(size = 9),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                plot.title = element_text(size = 12, face = "bold"))
+
+svg(paste0(plots_dir, "/Panel_D_AML_dataset_ref_aml_full_status.svg"), width = 8.3, height=3.85)
 p
 dev.off()
 
+#Hex version
+p = ggplot(time.list, aes(x = expr, y = time, color = ct)) +
+        geom_hex() +
+        stat_bin2d(bins = 50, show.legend = F) +
+        scale_fill_gradient(low = "grey85", high = "grey30", guide = guide_colorbar(direction = "horizontal", barheight = 0.5))  +
+        geom_smooth(data = time.list %>% filter(!expr == 0.0),
+                        method=lm, alpha=0.5, color="#FF7F00") +
+        facet_wrap(~ gene, scale = "free_x") +
+        theme_bw() +
+        ylim(c(0.0, 1.0)) +
+        xlab("Cis gene normalized UMI expression") +
+        ylab("Pseudotime") +
+        theme(legend.key = element_blank(),
+                legend.position = "bottom",
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.text = element_text(size = 9),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                plot.title = element_text(size = 12, face = "bold"))
+
+svg(paste0(plots_dir, "/Panel_D_AML_dataset_ref_aml_full_ct.svg"), width = 8.3, height=3.85)
+p
+dev.off()
+
+ncells = 20
+time.list_pseudo <- rbindlist(lapply(gene.set, function(y){
+        rbindlist(lapply(seq(1, ncol(reference_aml@assays$CCA), ncells), function(x) {
+          as.data.frame(t(reference_aml@assays$CCA[y])) %>% arrange(pick(y)) %>% slice(x:(x + ncells)) %>% rownames -> temp_cells 
+          out = data.table(gene = y,
+                                time = mean(reference_aml@meta.data[temp_cells,]$DC.time, na.rm = T),
+                                expr = mean(reference_aml@assays$CCA[y, temp_cells], na.rm = T),
+                                bin = as.integer(x / ncells) + 1,
+				std_time = sd(reference_aml@meta.data[temp_cells,]$DC.time, na.rm = T),
+				std_expr = sd(reference_aml@assays$CCA[y, temp_cells], na.rm = T))
+	  colnames(out) = c("gene", "time", "expr", "bin", "std_time", "std_expr")
+          out
+        }))
+}))
+
+##------------------------------------------Panel E------------------------------------------
+time.list_pseudo %>% filter(gene %in% gene.set) -> time.list_pseudo
+time.list_pseudo$gene = factor(time.list_pseudo$gene, levels = c("GFI1B", "NFE2", "MYB"))
+
+p = ggplot(time.list_pseudo, aes(y = time, x = expr, ymin = time - 1 * std_time, ymax = time + 1 * std_time, xmin = expr - 1 * std_expr, xmax = expr + 1 * std_expr)) +
+        geom_point(size = 1, alpha = 0.5) +
+	geom_linerange(alpha=0.25, size=0.25) +
+	ggstance::geom_linerangeh(alpha=0.25, size=0.25) +
+        geom_smooth(method=loess, alpha = 0.25, size = 0.75, color="#FF7F00") +
+        facet_wrap(~ gene, scale = "free_x") +
+        theme_bw() +
+	coord_cartesian(ylim = c(0.0, 1.0), expand = FALSE) +
+        xlab("Aggregated cis gene UMI expression") +
+        ylab("Mean pseudotime") +
+        theme(axis.text = element_text(size = 9),
+                legend.key = element_blank(),
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                plot.title = element_text(size = 12, face = "bold"))
+
+png(paste0(plots_dir, "/Panel_E_AML_dataset_ref_aml_full.png"), width = 8.3, height=3.24, units="in", res=720)
+p
+dev.off()
+
+time.list_pseudo$dataset = "AML"
+bind_rows(time.list_pseudo_super, time.list_pseudo) -> time.list_pseudo_super
+
+#------------------------------------------Reference Healthy---------------------------------------------------
+reference_healthy = subset(reference, subset = (patient == "Reference") | (patient == "A.0"))
+##------------------------------------------Time dist by dosage gene-----------------------------------
+
+gene.set = c("GFI1B", "NFE2", "MYB")
+
+time.list <- rbindlist(lapply(gene.set, function(x) {
+  return(data.table(gene = x, time = reference_healthy$DC.time, expr = reference_healthy@assays$CCA@data[x,]))
+}))
+
+
+time.list$gene = factor(time.list$gene, levels = c("GFI1B", "NFE2", "MYB"))
+
+
+#Hex version
+p = ggplot(time.list, aes(x = expr, y = time)) +
+        geom_hex() +
+        stat_bin2d(bins = 50, show.legend = F) +
+        scale_fill_gradient(low = "grey85", high = "grey30", guide = guide_colorbar(direction = "horizontal", barheight = 0.5))  +
+        geom_smooth(data = time.list %>% filter(!expr == 0.0),
+                        method=lm, alpha=0.5, color="#FF7F00") +
+        facet_wrap(~ gene, scale = "free_x") +
+        theme_bw() +
+        ylim(c(0.0, 1.0)) +
+        xlab("Cis gene normalized UMI expression") +
+        ylab("Pseudotime") +
+        theme(legend.key = element_blank(),
+                legend.position = "bottom",
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.text = element_text(size = 9),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                plot.title = element_text(size = 12, face = "bold"))
+
+svg(paste0(plots_dir, "/Panel_D_AML_dataset_ref_healthy_full.svg"), width = 8.3, height=3.85)
+p
+dev.off()
+
+
+time.list_pseudo <- rbindlist(lapply(gene.set, function(y){
+        rbindlist(lapply(seq(1, ncol(reference_healthy@assays$CCA), ncells), function(x) {
+          as.data.frame(t(reference_healthy@assays$CCA[y])) %>% arrange(pick(y)) %>% slice(x:(x + ncells)) %>% rownames -> temp_cells
+          out = data.table(gene = y,
+                                time = mean(reference_healthy@meta.data[temp_cells,]$DC.time, na.rm = T),
+                                expr = mean(reference_healthy@assays$CCA[y, temp_cells], na.rm = T),
+                                bin = as.integer(x / ncells) + 1,
+                                std_time = sd(reference_healthy@meta.data[temp_cells,]$DC.time, na.rm = T),
+                                std_expr = sd(reference_healthy@assays$CCA[y, temp_cells], na.rm = T))
+          colnames(out) = c("gene", "time", "expr", "bin", "std_time", "std_expr")
+          out
+        }))
+}))
+
+
+##------------------------------------------Panel E------------------------------------------
+time.list_pseudo %>% filter(gene %in% gene.set) -> time.list_pseudo
+time.list_pseudo$gene = factor(time.list_pseudo$gene, levels = c("GFI1B", "NFE2", "MYB"))
+
+
+p = ggplot(time.list_pseudo, aes(y = time, x = expr, ymin = time - 1 * std_time, ymax = time + 1 * std_time, xmin = expr - 1 * std_expr, xmax = expr + 1 * std_expr)) +
+        geom_point(size = 1, alpha = 0.5) +
+        geom_linerange(alpha=0.25, size=0.25) +
+        ggstance::geom_linerangeh(alpha=0.25, size=0.25) +
+        geom_smooth(method=loess, alpha = 0.25, size = 0.75, color="#FF7F00") +
+        facet_wrap(~ gene, scale = "free_x") +
+        theme_bw() +
+        coord_cartesian(ylim = c(0.0, 1.0), expand = FALSE) +
+        xlab("Aggregated cis gene UMI expression") +
+        ylab("Mean pseudotime") +
+        theme(axis.text = element_text(size = 9),
+                legend.key = element_blank(),
+                strip.background = element_rect(colour="white", fill="white"),
+                axis.title = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                plot.title = element_text(size = 12, face = "bold"))
+
+
+png(paste0(plots_dir, "/Panel_E_AML_dataset_ref_healthy_full.png"), width = 8.3, height=3.24, units="in", res=720)
+p
+dev.off()
+
+time.list_pseudo$dataset = "Healthy"
+bind_rows(time.list_pseudo_super, time.list_pseudo) -> time.list_pseudo_super
+
+
+
+
+
+
+
+##-------------------------------------------Super Panel E---------------------------------------------------------------
+time.list_pseudo_super %>% filter(gene %in% gene.set) -> time.list_pseudo_super
+time.list_pseudo_super$gene = factor(time.list_pseudo_super$gene, levels = c("GFI1B", "NFE2", "MYB"))
+time.list_pseudo_super$dataset = factor(time.list_pseudo_super$dataset, levels = c("AML", "Healthy"))
+
+
+
+
+p = ggplot(time.list_pseudo_super, aes(y = time, x = expr, ymin = time - 1 * std_time, ymax = time + 1 * std_time, xmin = expr - 1 * std_expr, xmax = expr + 1 * std_expr)) +
+        geom_point(size = 1, alpha = 0.5) +
+        geom_linerange(alpha=0.25, size=0.25) +
+        #ggstance::geom_linerangeh(alpha=0.25, size=0.25) +
+        geom_smooth(method=loess, alpha = 0.25, size = 0.75, color="#FF7F00") +
+        facet_grid(dataset ~ gene) +
+        theme_bw() +
+        xlab("Mean cis gene normalized UMI expression") + 
+        ylab("Mean Pseudotime") +
+        coord_cartesian(ylim = c(0.0, 1.0), expand = T) +
+        theme(axis.text = element_text(size = 9), 
+                legend.key = element_blank(), 
+                strip.background = element_rect(colour="white", fill="white"), 
+                axis.title = element_text(size = 11), 
+                strip.text = element_text(size = 11), 
+                plot.title = element_text(size = 12, face = "bold")) 
+ 
+ 
+pdf(paste0(plots_dir, "/Panel_E_AML_dataset_full_super_ref.pdf"), width = 8.3,height=5.6)#, units="in", res=720) 
+p
+dev.off() 
+}
