@@ -25,6 +25,7 @@ library(tidyr)
 library(gtable)
 library(gridExtra)
 
+
 registerDoParallel(cores=20)
 
 ##------------------------------------------Setting paths---------------------------------------
@@ -34,45 +35,77 @@ processed_data_dir = file.path("../../processed_data", folder_name)
 plots_dir = file.path("../../plots", folder_name)
 
 ##------------------------------------------Load reference dataset------------------------------
-if (F){
+if (T){
 reference =  readRDS(paste0(data_dir, "/bm_ref.rds"))
 reference <- subset(reference, subset = celltype.l1 %in% c('DC', 'HSPC', 'Mono', 'NK'))
+VariableFeatures(reference) <- rownames(reference@reductions$refDR@feature.loadings)
 
 ##------------------------------------------Load and preprocess D2N dataset---------------------
 d2n_full <- readRDS(file = paste0(data_dir, "/d2n_SeuratObj_PostQC_dCas9_NewMD.RDS"))
 counts <- GetAssayData(d2n_full, assay = "RNA")
-counts <- counts[-(which(rownames(counts) %in% c('CRISPRi', 'CRISPRa'))),]
+counts <- counts[-(which(rownames(counts) %in% c('CRISPRi', 'CRISPRa'))),]#, 'MYB', "GFI1B", 'NFE2'))),]
 d2n <- subset(d2n_full, features = rownames(counts))
-d2n <- SCTransform(
-  object = d2n,
-  assay = "RNA",
-  new.assay.name = "refAssay",
-  residual.features = rownames(x = reference),
-  reference.SCT.model = reference[["refAssay"]]@SCTModel.list$refmodel,
-  method = 'glmGamPoi',
-  ncells = 20000,
-  n_genes = 92,
-  do.correct.umi = F,
-  do.scale = FALSE,
-  do.center = TRUE
-)
+
 VariableFeatures(d2n) = rownames(d2n[["RNA"]])
 
+d2n@meta.data["MYB"] = t(d2n@assays$RNA["MYB"])
+d2n@meta.data["NFE2"] = t(d2n@assays$RNA["NFE2"])
+d2n@meta.data["GFI1B"] = t(d2n@assays$RNA["GFI1B"])
+
+
 ##------------------------------------------Integration------------------------------------------
+genes = intersect(rownames(x = reference), VariableFeatures(object = d2n))
+genes = genes[!genes %in% c("MYB", "NFE2", "GFI1B")]
+
+## Difussion map
+df.map <- DiffusionMap(data = reference[["refDR"]]@cell.embeddings)
+reference[['DC']] <- CreateDimReducObject(embeddings = df.map@eigenvectors*1000, key = 'DC_', assay = 'refAssay')
+reference@meta.data$cell_name = rownames(reference@meta.data)
+
+eryth.monocle = subset(reference, subset = celltype.l2 %in% c("Early Eryth", "Late Eryth", "HSC", "EMP"), features = rownames(reference))
+#eryth.monocle[['umap']] = NULL
+eryth.monocle[['umap']] <- eryth.monocle[['DC']]
+eryth.monocle[['umap']]@cell.embeddings <- eryth.monocle[['umap']]@cell.embeddings[,1:2]
+
+early_eryth = subset(eryth.monocle, subset = celltype.l2 == "HSC")[['umap']]@cell.embeddings[,1:2]
+ 
+ 
+eryth.centr = centroid(early_eryth) 
+ 
+start = Sys.time() 
+dist_cent = rbindlist(foreach(cell = rownames(subset(eryth.monocle, subset = (celltype.l2 == "HSC"))[['umap']]@cell.embeddings[,1:2])) %dopar% {
+        data.table(cell, as.numeric(dist(cbind(as.vector(eryth.centr), as.vector(subset(eryth.monocle, subset = (celltype.l2 == "HSC"))[['umap']]@cell.embeddings[cell,1:2])))))
+})
+
+colnames(dist_cent) = c("cell", "dist") 
+dist_cent %>% arrange(abs(dist)) %>% head(40) %>% select(cell) -> init_cells
+
+##------------------------------------------Trajectory inference------------------------------------------
+cds <- as.cell_data_set(x = eryth.monocle, assay = "refAssay", reductions = "umap", )
+cds <- cluster_cells(cds = cds, reduction_method = "UMAP")#, cluster_method = 'louvain') #, k=5)
+cds <- learn_graph(cds)
+
+##------------------------------------------Pseudotime Calculation-----------------------------------------
+cds <- order_cells(cds, root_cells = init_cells$cell)
+
+cds@principal_graph_aux@listData$UMAP$pseudotime <- cds@principal_graph_aux@listData$UMAP$pseudotime/max(cds@principal_graph_aux@listData$UMAP$pseudotime)
+eryth.monocle@meta.data$DC.time <-   cds@principal_graph_aux@listData$UMAP$pseudotime
+eryth.monocle@meta.data$label = paste0(eryth.monocle@meta.data$celltype.l2, "_", eryth.monocle@meta.data$group)
+ 
+left_join(reference@meta.data, eryth.monocle@meta.data) -> reference@meta.data
+rownames(reference@meta.data) <- colnames(reference@assays$refAssay)
+
 anchors <- FindTransferAnchors(
   reference = reference, 
   query = d2n, 
-  k.filter = NA, 
-  #reference.neighbors = "refdr.annoy.neighbors",
+  k.filter = 10, 
+  reduction='pcaproject',
   reference.assay = "refAssay",
-  query.assay = "refAssay",
+  query.assay = "RNA",
   reference.reduction = "refDR",
   normalization.method = "SCT",
-  features = intersect(rownames(x = reference), VariableFeatures(object = d2n)),
-  dims = 1:50, 
-  n.trees = 20,
-  mapping.score.k = 100
-)
+  features = genes,
+  dims = 1:50)
 
 d2n <- MapQuery(
   anchorset = anchors,
@@ -80,32 +113,45 @@ d2n <- MapQuery(
   reference = reference,
   refdata = list(
     celltype.l1 = "celltype.l1",
-    celltype.l2 = "celltype.l2"),
+    celltype.l2 = "celltype.l2",
+    DC.time = "DC.time"),
   reference.reduction = "refDR", 
   reduction.model = "refUMAP")
 
+
 ###------------------------------------------UMAP for shared embeddings---------------------------
 d2n$celltype.l2 <- d2n$predicted.celltype.l2
+d2n$celltype.l1 <- d2n$predicted.celltype.l1
+d2n$DC.time = d2n$predicted.DC.time
+ 
 d2n$group <- 'query'
 reference$group <- 'reference'
 
 emb.merge <- merge( reference[['refDR']], d2n[['ref.refDR']])
 emb.merge@assay.used <- 'refAssay'
-DefaultAssay(reference) <- DefaultAssay(d2n) <- 'refAssay'
+DefaultAssay(reference) <- 'refAssay'
+DefaultAssay(d2n) = "RNA"
 
-
-obj.merge <- merge(DietSeurat(reference, assays = 'refAssay'), DietSeurat(d2n, assays = 'refAssay') )
+obj.merge <- merge(DietSeurat(reference, assays = 'refAssay'), DietSeurat(d2n, assays = 'RNA') )
 obj.merge[['refDR']] <- emb.merge
 obj.merge <- RunUMAP(obj.merge, dims = 1:30, reduction="refDR")
 d2n_types = unique(d2n$celltype.l2)
 ref_types = setdiff(unique(reference$celltype.l2), d2n_types)
 obj.merge$celltype.l2 = factor(obj.merge$celltype.l2, levels=c(d2n_types, ref_types))
+
+scores = MappingScore(
+  anchors=anchors,
+  verbose = TRUE,
+  ndim=50
+)
+
+saveRDS(obj.merge, paste0(processed_data_dir, "/integrated_SeuratObject_BM_d2n.RDS"))
 }
 
-obj.merge = readRDS(paste0(processed_data_dir, "/integrated_SeuratObject_BM_d2n.RDS"))
+
 cols = DiscretePalette(24)
 Idents(obj.merge) <- obj.merge@meta.data$group
-to_plot_obj.merge = subset(obj.merge, downsample=10000)
+to_plot_obj.merge = subset(obj.merge, downsample=5000)
 
 #------------------------------------------Panel A---------------------------------------------------
 p1 <- DimPlot(to_plot_obj.merge, cols = alpha(cols, 0.33), group.by = 'celltype.l2',  pt.size = 0.01, raster = F) + 
@@ -118,12 +164,14 @@ p2 <- DimPlot(to_plot_obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype
 	ggtitle("Perturbed") + 
 	xlab("UMAP_1") +
 	ylab("")
+
 p3 <- DimPlot(to_plot_obj.merge,   cols = alpha(cols, 0.33), group.by = 'celltype.l2', cells = WhichCells(to_plot_obj.merge, expression =  group == "reference"),  pt.size = 0.01, raster = F) + 
 	NoLegend() + 
 	ggtitle("Reference") +
 	xlab("") + 
         ylab("")
-p4 =  DimPlot(to_plot_obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype.l2', cells = WhichCells(to_plot_obj.merge, expression =  group == "query"), raster = F) + 
+
+p4 =  DimPlot(to_plot_obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype.l2', raster = F) + 
 	guides(colour = guide_legend(override.aes = list(size=2), nrow=3)) +
 	theme(legend.position= "bottom",
         	legend.text = element_text(size = 9),
@@ -132,7 +180,7 @@ p4 =  DimPlot(to_plot_obj.merge,  cols = alpha(cols, 0.33), group.by = 'celltype
 		legend.spacing.y = unit(3, 'pt'))
 
 leg = cowplot::get_legend(p4)
-svg(paste0(plots_dir, "/Panel_A_BM_dataset.svg"), width=8.3, height=3.1)
+svg(paste0(plots_dir, "/Panel_A_BM_dataset_new.svg"), width=8.3, height=3.1)
 p1 + p2 + p3 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
                                            axis.title = element_text(size = 11),
                                            plot.title = element_text(size = 12))
@@ -143,75 +191,29 @@ grid.newpage()
 grid.draw(leg)
 dev.off()
 
+d2n = subset(obj.merge, subset = group == "query")
 
-#------------------------------------------Diffusion map analysis-----------------------------------
-if (F){
-df.map <- DiffusionMap(data = obj.merge[['refDR']]@cell.embeddings[,1:30])
-obj.merge[['DC']] <- CreateDimReducObject(embeddings = df.map@eigenvectors*1000, key = 'DC_', assay = 'refAssay')
-
-obj.merge@meta.data$cell_name = rownames(obj.merge@meta.data)
-
-saveRDS(obj.merge, paste0(processed_data_dir, "/integrated_SeuratObject_BM_d2n.RDS"))
-}
-
-
-##------------------------------------------Pseudotime analysis---------------------------------------
-
-###-----------------------------------------Erythroid Cells-------------------------------------------
-
-eryth.monocle = subset(obj.merge, subset = (celltype.l2 == "Early Eryth") | (celltype.l2 == "Late Eryth"))
-eryth.monocle[['umap']] = NULL
-eryth.monocle[['umap']] <- eryth.monocle[['DC']]
-eryth.monocle[['umap']]@cell.embeddings <- eryth.monocle[['umap']]@cell.embeddings[,1:2]
-
-##------------------------------------------Select root cells------------------------------------------
-early_eryth = subset(eryth.monocle, subset = (celltype.l2 == "Early Eryth") & (group == "reference"))[['umap']]@cell.embeddings[,1:2]
-
-
-eryth.centr = centroid(early_eryth)
-
-start = Sys.time()
-dist_cent = rbindlist(foreach(cell = rownames(subset(eryth.monocle, subset = (celltype.l2 == "Early Eryth"))[['umap']]@cell.embeddings[,1:2])) %dopar% {
-	data.table(cell, as.numeric(dist(cbind(as.vector(eryth.centr), as.vector(subset(eryth.monocle, subset = (celltype.l2 == "Early Eryth"))[['umap']]@cell.embeddings[cell,1:2])))))
-})
-print(Sys.time() - start)
-colnames(dist_cent) = c("cell", "dist")
-dist_cent %>% arrange(abs(dist)) %>% head(40) %>% select(cell) -> init_cells
-
-##------------------------------------------Trajectory inference------------------------------------------
-cds <- as.cell_data_set(x = eryth.monocle, assay = "refAssay", reductions = "umap", )
-cds <- cluster_cells(cds = cds, reduction_method = "UMAP")#, k=5)
-cds <- learn_graph(cds)
-
-##------------------------------------------Pseudotime Calculation-----------------------------------------
-cds <- order_cells(cds, root_cells = init_cells$cell)
-
-cds@principal_graph_aux@listData$UMAP$pseudotime <- cds@principal_graph_aux@listData$UMAP$pseudotime/max(cds@principal_graph_aux@listData$UMAP$pseudotime)
-eryth.monocle@meta.data$DC.time <-   cds@principal_graph_aux@listData$UMAP$pseudotime
-eryth.monocle@meta.data$label = paste0(eryth.monocle@meta.data$celltype.l2, "_", eryth.monocle@meta.data$group)
-
-saveRDS(eryth.monocle, paste0(processed_data_dir, "/integrated_erythro_SeuratObject_BM_d2n.RDS"))
-d2n = subset(eryth.monocle, subset = group == "query")
-reference = subset(eryth.monocle, subset = group == "reference")
+to_plot_cds = subset(cds, downsample=5000)
+to_plot_eryth.monocle = subset(eryth.monocle, downsample=5000)
 ##------------------------------------------Panel B--------------------------------------------------------
-p2 <- FeaturePlot(eryth.monocle,
-                        features = "DC.time",
-                        reduction = 'DC',
-                        pt.size = 0.01,
-                        raster = F) +
-                xlab("") +
-                ylab("DC_2") +
-                labs(color = "Pseudotime") +
-                theme(legend.position = c(0.15, 0.9),
-                        legend.title = element_text(size = 9),
-                        legend.direction="horizontal",
-                        legend.text = element_text(size = 9),
-                        legend.key.size = unit(7, "pt"),
-                        legend.spacing.y = unit(3, 'pt'))  &
-        scale_colour_viridis_c(option="C")
+p2 = plot_cells(to_plot_cds,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5) +
+        xlab("") +
+        ylab("DC_2") +
+        labs(color = "Pseudotime") +
+        theme(legend.position = c(0.15, 0.9),
+               legend.title = element_text(size = 9),
+               legend.direction="horizontal",
+               legend.text = element_text(size = 9),
+               legend.key.size = unit(7, "pt"),
+               legend.spacing.y = unit(3, 'pt'))
  
 
-p3 = DimPlot(eryth.monocle, sizes.highlight = .01, label=F, raster = F, pt.size = 0.5,  reduction = 'DC', group.by = "label") +
+p3 = DimPlot(to_plot_eryth.monocle, sizes.highlight = .01, label=F, raster = F, pt.size = 0.5,  reduction = 'DC', group.by = "celltype.l2") +
         theme(plot.title = element_text(size = 12, face = "plain"),
                 axis.line=element_line(size=0.25),
                 legend.position = c(0.15, 0.9),
@@ -224,7 +226,7 @@ p3 = DimPlot(eryth.monocle, sizes.highlight = .01, label=F, raster = F, pt.size 
         ggtitle("") +
         ylab("DC_2")
 
-p4 <- DimPlot(eryth.monocle, sizes.highlight = .01, raster = F, pt.size = 0.5,  reduction = 'DC', cells.highlight = init_cells$cell) +
+p4 <- DimPlot(to_plot_eryth.monocle, sizes.highlight = .01, raster = F, pt.size = 0.5,  reduction = 'DC', cells.highlight = init_cells$cell) +
         theme(plot.title = element_text(size = 12, face = "plain"),
                 axis.line=element_line(size=0.25),
                 legend.position = c(0.15, 0.9),
@@ -238,17 +240,18 @@ p4 <- DimPlot(eryth.monocle, sizes.highlight = .01, raster = F, pt.size = 0.5,  
         ylab("")
 
 
-svg(paste0(plots_dir, "/Panel_B_BM_dataset.svg"), width = 8.3, height=3.1)
+svg(paste0(plots_dir, "/Panel_B_BM_dataset_new.svg"), width = 8.3, height=3.1)
 p3 + p4  + p2 + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
                                                                 axis.title = element_text(size = 11),
                                                                 plot.title = element_text(size = 12, face = "bold"))
 dev.off()
 
+to_plot_d2n = subset(d2n, downsample=5000)
 
 #------------------------------------------Panel C-----------------------------------------------
-p2 <- FeaturePlot(d2n, features = "GFI1B", reduction = 'DC', 
+p2 <- FeaturePlot(to_plot_d2n, reduction = 'refDR', 
 			cells = WhichCells(d2n, expression = gene == "GFI1B"),  
-			pt.size = 0.01, raster = F) + 
+			pt.size = 0.01, raster = F,  features = "GFI1B") + 
 		xlab("") +
                 ylab("DC_2") +
 		labs(color = "Norm UMI") + 
@@ -258,7 +261,7 @@ p2 <- FeaturePlot(d2n, features = "GFI1B", reduction = 'DC',
 			legend.text = element_text(size = 9), 
 			legend.key.size = unit(7, "pt"), 
 			legend.spacing.y = unit(3, 'pt'))
-p3 <- FeaturePlot(d2n, features = "NFE2", reduction = 'DC', cells = WhichCells(d2n, expression = gene == "NFE2"), pt.size = 0.01, raster = F) +
+p3 <- FeaturePlot(to_plot_d2n, features = "NFE2", reduction = 'refDR', cells = WhichCells(d2n, expression = gene == "NFE2"), pt.size = 0.01, raster = F) +
 		labs(color = "Norm UMI") +
 		xlab("DC_1") +
                 ylab("") +
@@ -268,7 +271,7 @@ p3 <- FeaturePlot(d2n, features = "NFE2", reduction = 'DC', cells = WhichCells(d
                         legend.text = element_text(size = 9),
                         legend.key.size = unit(7, "pt"),
                         legend.spacing.y = unit(3, 'pt'))
-p4 <- FeaturePlot(d2n,  features = "MYB", reduction = 'DC', cells = WhichCells(d2n, expression = gene == "MYB"),  pt.size = 0.01, raster = F) +
+p4 <- FeaturePlot(to_plot_d2n,  features = "MYB", reduction = 'refDR', cells = WhichCells(d2n, expression = gene == "MYB"),  pt.size = 0.01, raster = F) +
 		labs(color = "Norm UMI") +
 		xlab("") +
                 ylab("") +
@@ -280,7 +283,7 @@ p4 <- FeaturePlot(d2n,  features = "MYB", reduction = 'DC', cells = WhichCells(d
                         legend.spacing.y = unit(3, 'pt'))
  
 
-svg(paste0(plots_dir, "/Panel_C_BM_dataset.svg"), width = 8.3, height=3.06)
+svg(paste0(plots_dir, "/Panel_C_BM_dataset_new.svg"), width = 8.3, height=3.06)
 (p2|p3|p4) + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
                                                                 axis.title = element_text(size = 11),
                                                                 plot.title = element_text(size = 12))
@@ -290,73 +293,16 @@ dev.off()
 
 
 
-
-
-
-
-
-#------------------------------------------Panel C ref-----------------------------------------------
-p2 <- FeaturePlot(reference,
-                        features = "GFI1B",
-                        reduction = 'DC',
-                        pt.size = 0.01,
-                        raster = F) +
-                xlab("") +
-                ylab("DC_2") +
-                labs(color = "Norm UMI") +
-                theme(legend.position = c(0.15, 0.9),
-                        legend.title = element_text(size = 9),
-                        legend.direction="horizontal",
-                        legend.text = element_text(size = 9),
-                        legend.key.size = unit(7, "pt"),
-                        legend.spacing.y = unit(3, 'pt'))
-
-
-p3 <- FeaturePlot(reference,
-                        features = "NFE2",
-                        reduction = 'DC',
-                        pt.size = 0.01,
-                        raster = F) +
-                labs(color = "Norm UMI") +
-                xlab("DC_1") +
-                ylab("") +
-                theme(legend.position = c(0.15, 0.9),
-                        legend.title = element_text(size = 9),
-                        legend.direction="horizontal",
-                        legend.text = element_text(size = 9),
-                        legend.key.size = unit(7, "pt"),
-                        legend.spacing.y = unit(3, 'pt'))
-
-p4 <- FeaturePlot(reference,
-                        features = "MYB",
-                        reduction = 'DC',
-                        pt.size = 0.01,
-                        raster = F) +
-                labs(color = "Norm UMI") +
-                xlab("") +
-                ylab("") +
-                theme(legend.position = c(0.15, 0.9),
-                        legend.title = element_text(size = 9),
-                        legend.direction="horizontal",
-                        legend.text = element_text(size = 9),
-                        legend.key.size = unit(7, "pt"),
-                        legend.spacing.y = unit(3, 'pt'))
-
-svg(paste0(plots_dir, "/Panel_C_BM_dataset_ref.svg"), width = 8.3, height=3.06)
-(p2|p3|p4) + plot_layout(ncol = 3)&theme(axis.text = element_text(size = 9),
-                                                                axis.title = element_text(size = 11),
-                                                                plot.title = element_text(size = 12))
-dev.off()
-
-
 ##------------------------------------------Time dist by dosage gene-----------------------------------
 d2n_logFC = readRDS(paste0(data_dir, "/d2n_DemuxHTOdCas9_Wilcoxon_AllGenesDE.RDS"))
 
 gene.set = c("GFI1B", "NFE2", "MYB")
 
 d2n_norm = NormalizeData(d2n)
+d2n$DC.time = as.numeric(d2n$DC.time)
 time.list <- rbindlist(lapply(gene.set, function(x) {
-  return(data.table(gene = x, time = d2n_norm$DC.time[ which(d2n_norm$gene == x ) ], expr = d2n_norm@assays$refAssay@data[, which(d2n_norm$gene == x ) ][x,]))
+  cells = which(d2n_norm$gene == x )
+  return(data.table(gene = x, time = d2n$DC.time[cells], expr = d2n_norm@assays$RNA@data[,cells][x,]))
 })) 
 
 
@@ -364,7 +310,7 @@ time.list_pseudo <- rbindlist(lapply(unique(d2n_norm$guide_crispr), function(x) 
   guide = unlist(str_split(x, pattern = "-"))[1]
   g = unlist(str_split(guide, pattern = "_"))[1]  
   c_l = unlist(str_split(x, pattern = "-"))[2]
-  out = data.table(gene = g, time = mean(d2n_norm$DC.time[ which(d2n_norm$guide_crispr == x) ], na.rm = T), expr = d2n_logFC %>% 
+  out = data.table(gene = g, time = mean(d2n$DC.time[ which(d2n$guide_crispr == x) ], na.rm = T), expr = d2n_logFC %>% 
 															filter((guide_1 == guide) & (cell_line == c_l)) %>% 
 															select(dosage_gene_log2FC) %>% 
 															distinct())
@@ -374,7 +320,7 @@ time.list_pseudo <- rbindlist(lapply(unique(d2n_norm$guide_crispr), function(x) 
 
 
 time.list$gene = factor(time.list$gene, levels = c("GFI1B", "NFE2", "MYB"))
-
+time.list$time  = as.numeric(time.list$time)
 
 ##------------------------------------------Panel D-------------------------------------------------
 theme_set(theme_bw())
@@ -397,7 +343,7 @@ p = ggplot(time.list, aes(x = expr, y = time)) +
                 plot.title = element_text(size = 12, face = "bold"))
  
  
-svg(paste0(plots_dir, "/Panel_D_BM_dataset_hex.svg"), width = 8.3, height=3.85)
+svg(paste0(plots_dir, "/Panel_D_BM_dataset_hex_new.svg"), width = 8.3, height=3.85)
 p
 dev.off() 
  
@@ -421,7 +367,7 @@ p = ggplot(time.list_pseudo, aes(y = time, x = expr)) +
                 plot.title = element_text(size = 12, face = "bold"))
 
 
-svg(paste0(plots_dir, "/Panel_E_BM_dataset.svg"), width = 8.3, height=3.24)
+svg(paste0(plots_dir, "/Panel_E_BM_dataset_new.svg"), width = 8.3, height=3.24)
 p
 dev.off()
 
