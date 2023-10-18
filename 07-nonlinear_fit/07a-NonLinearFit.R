@@ -306,7 +306,7 @@ S4Param_dt[, .N, .(dosage_gene, unresponsive)]
 
 # Non-monotonic (for GFI1B since has the largest range)
 RMSE_G_dt <- RMSE_dt[dosage_gene == "GFI1B" ,]
-nonmono_cistrans <- RMSE_G_dt[delta_RMSE_sig_loess >= quantile(delta_RMSE_sig_loess, 0.95), cis_trans]
+nonmono_cistrans <- RMSE_G_dt[delta_RMSE_sig_loess >= quantile(delta_RMSE_sig_loess, 0.96), cis_trans]
 mono_cistrans <- RMSE_dt$cis_trans[!(RMSE_dt$cis_trans %in% nonmono_cistrans)]
 S4Param_dt[, non_monotonic := ifelse(cis_trans %in% nonmono_cistrans, T, F)]
 
@@ -410,7 +410,18 @@ foreach(dg = dosage_genes) %do% {
 }
 
 
-
+# Plot non-monotonics
+plot_dt <- DE_dt[dosage_gene == "GFI1B" & gene %in% unique(RMSE_dt[non_monotonic == T, gene]),]
+fit_dt <- Fit_curves_dt[dosage_gene == "GFI1B" & gene %in% unique(RMSE_dt[non_monotonic == T, gene])]
+p <- ggplot(plot_dt, aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
+  facet_wrap(gene ~ ., ncol = 2) +
+  geom_point(color = "grey20", alpha=0.7) +
+  geom_line(data = fit_dt, color="#377EB8", linewidth = 0.75) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  labs(x=paste0("GFI1B log2(FC)"), y="Trans gene log2(FC)") +
+  coord_cartesian(ylim = c(min(plot_dt$avg_log2FC)-0.1, max(plot_dt$avg_log2FC+0.1)))
+p
+ggsave(file.path(plots_dir, "07a_08_DosageRespCurves_NonMonotonic.pdf"), p, width = 2.4, height = 2.9)
 
 #### Save processed data
 # RMSE/AIC data
