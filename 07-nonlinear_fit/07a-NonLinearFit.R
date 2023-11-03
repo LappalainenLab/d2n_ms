@@ -423,6 +423,22 @@ p <- ggplot(plot_dt, aes(x = dosage_gene_log2FC, y=avg_log2FC)) +
 p
 ggsave(file.path(plots_dir, "07a_08_DosageRespCurves_NonMonotonic.pdf"), p, width = 2.4, height = 2.9)
 
+
+## Distribution of fit sigmoid parameters per cis gene
+
+plot_dt <- melt.data.table(S4Param_dt[, .(gene, dosage_gene, slope_IF, min_assmp, max_assmp, x_IF, min_max_range)], id.vars = c("gene", "dosage_gene"), variable.name = "parameter")
+p <- ggplot(plot_dt[dosage_gene != gene, ], aes(x = value)) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  stat_ecdf(geom = "step", aes(color = dosage_gene), show.legend = F) +
+  facet_grid(dosage_gene ~ parameter, scales = "free") +
+  scale_color_manual("dosage gene", values = col_genes[dosage_genes]) +
+  theme_bw() +
+  labs(y = "Freq", x = "Sigmoid parameter value") +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white"))
+p
+ggsave(file.path(plots_dir, "07a_09_DistS4Params.pdf"), p, width = 6, height = 4)
+
+
 #### Save processed data
 # RMSE/AIC data
 fwrite(file = file.path(processed_data_dir, "D2N_AIC_LmSig4Loess.txt"), RMSE_dt, quote = F, row.names = F)
