@@ -4,6 +4,8 @@
 #     - Scale 0-1 quantitative features
 # (3) Plot mega-heatmap with annotations
 # (4) Systematic correlations between quantitative measures and sigmoid parameters
+# (5) Systematic differences between categorical features on sigmoid parameters
+# (6) Simplified and non-redundant gene annotations with dosage heatmap
 
 
 # JDE, April 2023
@@ -210,6 +212,28 @@ p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_
 p
 ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
 
+sel_gq = c("pLI", "mis_z", "pHaplo", "EDS", "n_peaks_GFI1B", "n_peaks_MYB", "n_peaks_NFE2", "Num_PPIs_whole_proteome", "Platelet", "Erythroblast", "Dendritic Cell", "Monocyte")
+
+pD <- ggplot(GQ[metric %in% sel_gq, ], aes(x = metric, y = gene)) +
+  geom_tile(aes(fill=scaled_value), colour="white") +
+  scale_fill_gradient("scaled\nvalue", low = "white", high = "#377EB8", na.value = "grey80") +
+  facet_grid(. ~ dataset, scales = "free_x", space = "free_x") +
+  theme_classic() +
+  scale_x_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+  scale_y_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  theme(axis.title = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.line = element_blank()) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  theme(strip.text.x.top = element_text(angle = 90))
+pD
+
+p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/15, 7/15, 2.25/15, 4.75/15))
+p
+ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
+ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08b_PredDosage_GeneProperties_Heatmap.pdf", p, width = 9, height = 6.5)
+
+
+
 
 ## (4) Correlation between quantitative gene annotations and all sigmoid features
 
@@ -253,45 +277,79 @@ p <- ggplot(Cor_dt, aes(y = sigmoid_param, x = metric)) +
 p
 ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 9, height = 6.5)
 
-## Aggregated values
-PT_singles[non_monotonic == F & responsive == T, .N, dosage_gene]
-PT_singles_agg <- PT_singles[non_monotonic == F & responsive == T & dosage_gene != "TET2", .(slope_IF = mean(slope_IF), 
-                                                                                             abs_slope_IF = mean(abs_slope_IF),
-                                                                                             min_assmp = mean(min_assmp),
-                                                                                             max_assmp = mean(max_assmp),
-                                                                                             min_max_range = mean(min_max_range),
-                                                                                             x_IF = mean(x_IF)),
-                             .(gene)]
 
-dt1 <- merge.data.table(GQ, PT_singles_agg, by = "gene")
-dt2 <- dt1[!is.na(value), {
-  lapply(.SD[, sig_feat, with = FALSE], function(x) {
-    cor.test(value, x)$p.value
-  })
-}, by = .(metric, dataset)]
-dt3 <- dt1[!is.na(value), {
-  lapply(.SD[, sig_feat, with = FALSE], function(x) {
-    cor.test(value, x)$estimate
-  })
-}, by = .(metric, dataset)]
-
-Cor_dt_agg <- merge.data.table(melt(dt2, id.vars = c("metric", "dataset"), variable.name = "sigmoid_param", value.name = "pval"),
-                               melt(dt3, id.vars = c("metric", "dataset"), variable.name = "sigmoid_param", value.name = "r"),
-                               by = c("metric", "dataset", "sigmoid_param"))
-Cor_dt_agg[, fdr := p.adjust(pval, method = "fdr")]
-Cor_dt_agg[, log10_pval := -log10(pval)]
-
-p <- ggplot(Cor_dt_agg, aes(x= sigmoid_param, y = metric)) +
+p <- ggplot(Cor_dt[metric %in% sel_gq, ], aes(y = sigmoid_param, x = metric)) +
   geom_point(aes(color=r, size=log10_pval)) +
-  facet_grid(dataset ~ ., scales = "free_y", space = "free_y") +
+  facet_grid(dosage_gene ~ dataset, scales = "free_x", space = "free_x") +
   scale_color_gradient2(low = "#377EB8", high = "#FF7F00", midpoint = 0) +
   theme(panel.grid = element_blank()) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), axis.title.x = element_blank())  +
   theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
-  theme(strip.text.y.right = element_text(angle = 0))
+  theme(strip.text.y.right = element_text(angle = 0)) +
+  labs(y = "Sigmoid parameter") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
 p
-ggsave("plots/20230405s_01_CorSigmoidParamsVsQuantGeneAnnot_AggregCisGene.pdf", p, width = 7, height = 9)
+ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 5, height = 6.5)
+ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08c_SigmoidParams_GeneProperties_Cor.pdf", p, width = 4, height = 6.5)
 
 
 
+### (5) Systematic differences between categorical features on sigmoid parameters
 
+Diff_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% {
+  dt1 <- merge.data.table(GA, PT_singles[dosage_gene == dg & non_monotonic == F, ], by = "gene")
+  dt1_melt <- melt.data.table(dt1, id.vars = colnames(dt1)[!(colnames(dt1) %in% sig_feat)], value.name = "param_value", variable.name = "param")
+}
+p <- ggplot(Diff_dt, aes(x=value, y=param_value)) + 
+  facet_grid(param ~ gene_set, scales = "free_y") +
+  geom_violin(scale = "width", fill="grey90") + 
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  geom_boxplot(width = 0.2, outlier.colour = NA) +
+  labs(y = "Sigmoid parameter value", x = "Is title category?")
+p
+
+qual_feat = unique(Diff_dt$gene_set)
+Diff_test_dt <- foreach(dg = c("GFI1B", "MYB", "NFE2"), .combine = rbind) %do% {
+  dt1 <- Diff_dt[!is.na(value) & dosage_gene == dg,]
+  dt2 <- foreach(gs = qual_feat, .combine = rbind) %do% {
+    foreach(sigp = sig_feat, .combine = rbind) %do% {
+      test <- wilcox.test(dt1[gene_set == gs & param == sigp & value == F, param_value], dt1[gene_set == gs & param == sigp & value == T, param_value])
+      data.table(dosage_gene = dg,
+                 gene_set = gs,
+                 sig_param = sigp,
+                 pval = test$p.value,
+                 mean_diff = mean(dt1[gene_set == gs & param == sigp & value == F, param_value])- mean(dt1[gene_set == gs & param == sigp & value == T, param_value]),
+                 dosage_gene = dg,
+                 dataset = unique(dt1[gene_set == gs, dataset])
+      )
+    }
+  }
+}  
+
+Diff_test_dt[, sign := ifelse(mean_diff >= 0, 1, -1)]
+Diff_test_dt[, log10_pval := -log10(pval)]
+Diff_test_dt[, gene_set := factor(gene_set, levels = ord_ga)]
+
+plot_dt <- unique(Diff_test_dt[, .(gene_set, sig_param, dosage_gene, mean_diff, log10_pval,dataset)])
+p <- ggplot(plot_dt, aes(x= gene_set, y = sig_param)) +
+  geom_point(aes(color=mean_diff, size=log10_pval)) +
+  facet_grid(dosage_gene ~ dataset , scales = "free_x", space = "free_x") +
+  scale_color_gradient2(low = "#377EB8", high = "#FF7F00", midpoint = 0, mid = "grey90") +
+  theme(panel.grid = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), axis.title.x = element_blank())  +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  theme(strip.text.y.right = element_text(angle = 0)) +
+  labs(y = "Sigmoid parameter") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
+p
+ggsave(file.path(plots_dir, "08d_SigmoidParams_GeneProperties_QualTest.pdf"), p, width = 4, height = 6.5)
+ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08d_SigmoidParams_GeneProperties_QualTest.pdf", p, width = 3.4, height = 6.5)
+
+# Test if un-responsive genes are enriched for houskeeping or TFs
+Fisher_dt <- unique(Diff_dt[, .(gene, gene_set, dataset, dosage_gene, value, unresponsive)])
+Fisher_test_dt <- Fisher_dt[, list(odds_ratio = fisher.test(table(value, unresponsive))$estimate,
+                                p_value = fisher.test(table(value, unresponsive))$p.value),
+                         by = .(gene_set, dataset)]
+Fisher_test_dt[, fdr := p.adjust(p_value, "fdr")]
