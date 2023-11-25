@@ -210,7 +210,7 @@ pD
 
 p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/20, 7.75/20, 1.75/15, 10/20))
 p
-ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
+#ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
 
 sel_gq = c("pLI", "mis_z", "pHaplo", "EDS", "n_peaks_GFI1B", "n_peaks_MYB", "n_peaks_NFE2", "Num_PPIs_whole_proteome", "Platelet", "Erythroblast", "Dendritic Cell", "Monocyte")
 
@@ -227,11 +227,18 @@ pD <- ggplot(GQ[metric %in% sel_gq, ], aes(x = metric, y = gene)) +
   theme(strip.text.x.top = element_text(angle = 90))
 pD
 
-p <- cowplot::plot_grid(pB, pA, pC, pD, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/15, 7/15, 2.25/15, 4.75/15))
-p
-ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 16, height = 15)
-ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08b_PredDosage_GeneProperties_Heatmap.pdf", p, width = 9, height = 6.5)
+# Extract legend
+l <- get_legend(pD)
 
+# Plot without label
+pD2 <- pD + theme(legend.position = "none")
+
+
+p <- cowplot::plot_grid(pB, pA, pC, pD2, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/15, 7/15, 2.75/15, 4.25/15))
+p
+ggsave(file.path(plots_dir, "08b_PredDosage_GeneProperties_Heatmap.pdf"), p, width = 12, height = 15)
+
+ggsave(file.path(plots_dir, "08b_legend.pdf"), l, width = 1, height = 2)
 
 
 
@@ -275,10 +282,10 @@ p <- ggplot(Cor_dt, aes(y = sigmoid_param, x = metric)) +
   theme(legend.position = "bottom") +
   guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
 p
-ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 9, height = 6.5)
+#ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 9, height = 6.5)
 
 
-p <- ggplot(Cor_dt[metric %in% sel_gq, ], aes(y = sigmoid_param, x = metric)) +
+pCor <- ggplot(Cor_dt[metric %in% sel_gq, ], aes(y = sigmoid_param, x = metric)) +
   geom_point(aes(color=r, size=log10_pval)) +
   facet_grid(dosage_gene ~ dataset, scales = "free_x", space = "free_x") +
   scale_color_gradient2(low = "#377EB8", high = "#FF7F00", midpoint = 0) +
@@ -289,9 +296,8 @@ p <- ggplot(Cor_dt[metric %in% sel_gq, ], aes(y = sigmoid_param, x = metric)) +
   labs(y = "Sigmoid parameter") +
   theme(legend.position = "bottom") +
   guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
-p
-ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 5, height = 6.5)
-ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08c_SigmoidParams_GeneProperties_Cor.pdf", p, width = 4, height = 6.5)
+pCor
+ggsave(file.path(plots_dir, "08c_SigmoidParams_GeneProperties_Cor.pdf"), p, width = 4.5, height = 6)
 
 
 
@@ -332,7 +338,7 @@ Diff_test_dt[, log10_pval := -log10(pval)]
 Diff_test_dt[, gene_set := factor(gene_set, levels = ord_ga)]
 
 plot_dt <- unique(Diff_test_dt[, .(gene_set, sig_param, dosage_gene, mean_diff, log10_pval,dataset)])
-p <- ggplot(plot_dt, aes(x= gene_set, y = sig_param)) +
+pDif <- ggplot(plot_dt, aes(x= gene_set, y = sig_param)) +
   geom_point(aes(color=mean_diff, size=log10_pval)) +
   facet_grid(dosage_gene ~ dataset , scales = "free_x", space = "free_x") +
   scale_color_gradient2(low = "#377EB8", high = "#FF7F00", midpoint = 0, mid = "grey90") +
@@ -343,9 +349,35 @@ p <- ggplot(plot_dt, aes(x= gene_set, y = sig_param)) +
   labs(y = "Sigmoid parameter") +
   theme(legend.position = "bottom") +
   guides(fill = guide_colourbar(barheight = 0.5,  barwidth = 6))
+pDif
+ggsave(file.path(plots_dir, "08d_SigmoidParams_GeneProperties_QualTest.pdf"), p, width = 3.6, height = 6)
+
+p0 <- ggplot()
+pDif2 <- pDif + theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  theme(axis.title = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.line = element_blank()) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  theme(strip.text.x.top = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  theme(
+    strip.background = element_blank(),  # Remove background
+    strip.text = element_blank()          # Remove text box
+  )
+pCor2 <- pCor + theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  theme(axis.title = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.line = element_blank()) +
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  theme(strip.text.x.top = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  theme(
+    strip.background = element_blank(),  # Remove background
+    strip.text = element_blank()          # Remove text box
+  )
+
+p <- cowplot::plot_grid(p0, p0, pDif2, pCor2, align = "h", axis = "tb", nrow = 1, rel_widths = c(1/15, 7/15, 2.75/15, 4.25/15))
 p
-ggsave(file.path(plots_dir, "08d_SigmoidParams_GeneProperties_QualTest.pdf"), p, width = 4, height = 6.5)
-ggsave("/gpfs/commons/groups/lappalainen_lab/jdomingo/projects/004-dosage_network/temp/08d_SigmoidParams_GeneProperties_QualTest.pdf", p, width = 3.4, height = 6.5)
+ggsave(file.path(plots_dir, "08e_SigmoidParams_GeneProperties_Stats.pdf"), p, width = 12, height = 6)
+
 
 # Test if un-responsive genes are enriched for houskeeping or TFs
 Fisher_dt <- unique(Diff_dt[, .(gene, gene_set, dataset, dosage_gene, value, unresponsive)])
