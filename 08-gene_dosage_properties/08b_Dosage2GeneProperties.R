@@ -385,3 +385,30 @@ Fisher_test_dt <- Fisher_dt[, list(odds_ratio = fisher.test(table(value, unrespo
                                 p_value = fisher.test(table(value, unresponsive))$p.value),
                          by = .(gene_set, dataset)]
 Fisher_test_dt[, fdr := p.adjust(p_value, "fdr")]
+
+# Example housekeeping min-max range aggregated by dosage gene
+p <- ggplot(Diff_dt[param == "min_max_range" & gene_set == "Houskeeping"], aes(x=value, y=param_value)) + 
+  geom_violin(scale = "width", fill="grey90") + 
+  theme(legend.key = element_blank(), strip.background = element_rect(colour="white", fill="white")) +
+  geom_boxplot(width = 0.2, outlier.colour = NA, notch = T) +
+  scale_y_log10() +
+  labs(y = "Min-max range", x = "Is housekeeping gene?")
+p
+ggsave(file.path(plots_dir, "08f_SigmoidParams_GeneProperties_HousekeepingMinMax.pdf"), p, width = 1.5, height = 2)
+
+wilcox.test(Diff_dt[param == "min_max_range" & gene_set == "Houskeeping" & value == T, param_value], Diff_dt[param == "min_max_range" & gene_set == "Houskeeping" & value == F, param_value])
+# W = 2462, p-value = 6.224e-08
+
+
+# Example pHaplo min-max range
+plot_dt <- merge.data.table(GQ, PT_singles[dosage_gene == "MYB" & non_monotonic == F & responsive == T, ], by = "gene")
+p <- ggplot(plot_dt[metric == "pHaplo" & !is.na(value), ], aes(x=min_max_range, y=value)) +
+  geom_smooth(color="grey50", method = "lm", alpha=0.2) +
+  geom_point() +
+  labs(y="pHaplo", x="Min-Max range")
+p
+ggsave(file.path(plots_dir, "08g_SigmoidParams_GeneProperties_pHaploMinMax.pdf"), p, width = 2, height = 1.8)
+
+
+cor.test(plot_dt[metric == "pHaplo" & !is.na(value), ]$min_max_range, plot_dt[metric == "pHaplo" & !is.na(value), ]$value)
+# r = -0.37, p-val = 0.007
