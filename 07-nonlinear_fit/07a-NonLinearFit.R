@@ -147,6 +147,43 @@ p <- cowplot::plot_grid(pB, pA, align = "v", axis = "tb", nrow = 2, rel_heights 
 p
 ggsave(file.path(plots_dir, "07a_02_SigVsLM_AIC_GFI1B.pdf"), p, width = 2.75, height = 3.75)
 
+# Stats: Mean delta AIC
+RMSE_dt[, mean(delta_AIC), dosage_gene]
+# 1:       GFI1B 18.7145404
+# 2:         MYB  0.1429265
+# 3:        NFE2  3.4030866
+temp <- copy(RMSE_dt)
+temp[, pos_delta := ifelse(delta_AIC >2, T, F)]
+temp[, .N, .(pos_delta, dosage_gene)]
+# pos_delta  N
+# 1:     FALSE 27
+# 2:      TRUE 64
+#64*100/(27+64) = 70.32967
+# 3:     FALSE         MYB 72
+# 4:      TRUE         MYB 19
+# 1900/(19+72) = 20.87912
+# 5:      TRUE        NFE2 37
+# 6:     FALSE        NFE2 54
+# 3700/(54+37) = 40.65934
+
+temp2 <- merge(temp, S4Param_dt, by=c("gene", "dosage_gene"))
+temp2[, pos_delta := ifelse(delta_AIC >2, T, F)][unresponsive == F, .N, .(pos_delta, dosage_gene)]
+# GFI1B
+# 1:     FALSE 12
+# 2:      TRUE 61
+#61*100/(12+61) = 83.56164
+
+# NFE2
+# 1:     FALSE 18
+# 2:      TRUE 31
+# 3100/(31+18) = 63.26531
+
+# MYB
+# 1:     FALSE 42
+# 2:      TRUE 15
+#1500/(15+42) = 26.31579
+
+
 
 # Limit cis gene FC range to the one gene copy gain or loss
 CN_range <- c(log2(0.5), log2(3/2))
@@ -181,6 +218,12 @@ RMSE_CNrange <- foreach(dg = dosage_genes, .combine = rbind) %do% {
   }
 }
 RMSE_CNrange[, delta_AIC := lm_aic - sig_aic]
+
+temp3 <- copy(RMSE_CNrange)
+temp3[, mean(delta_AIC), dosage_gene]
+# 1:       GFI1B  7.03569014
+# 2:         MYB  0.05351227
+# 3:        NFE2  3.56721854
 
 # Repeat same scatter AIC plot and distribution of Delta AIC
 mean_AIC <- RMSE_CNrange[!(gene %in% control_genes), .(mean_delta_AIC = mean(delta_AIC)), dosage_gene]
